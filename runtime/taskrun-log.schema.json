@@ -9,6 +9,7 @@
     "runtime_kit_version",
     "project",
     "task_summary",
+    "task_class",
     "evidence_state",
     "verification",
     "non_claims"
@@ -20,9 +21,29 @@
     "runtime_kit_version": { "type": "string" },
     "project": { "type": "string" },
     "task_summary": { "type": "string" },
+    "task_class": { "type": "string" },
+    "startup_packet_ref": { "type": "string" },
+    "project_adoption_ref": { "type": "string" },
     "context_pack": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "read_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "write_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "gates": {
+      "type": "object",
+      "properties": {
+        "network": { "type": "string" },
+        "provider": { "type": "string" },
+        "external_download": { "type": "string" },
+        "destructive_operations": { "type": "string" }
+      }
     },
     "evidence_state": {
       "type": "string",
@@ -52,6 +73,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "feedback_candidate": { "type": "boolean" }
+    "feedback_candidate": { "type": "boolean" },
+    "feedback_route": { "type": "string" }
   }
 }

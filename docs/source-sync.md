@@ -42,11 +42,12 @@ For maintainers:
 
 1. Update the private source rule when the change is a source-rule change.
 2. Decide which parts are public-safe.
-3. Update CompanyOS.
-4. Run `.\bin\company-os.ps1 validate`.
-5. Run `git diff --check`.
-6. Commit with a scoped message.
-7. Push to `main` or open a PR, depending on repository policy.
+3. Record or draft a projection decision using `templates/PROJECTION_DECISION.md`.
+4. Update CompanyOS.
+5. Run `.\bin\company-os.ps1 validate`.
+6. Run `git diff --check`.
+7. Commit with a scoped message.
+8. Push to `main` or open a PR, depending on repository policy.
 
 For external contributors:
 
@@ -68,3 +69,39 @@ Feedback should identify:
 Maintainers decide whether feedback becomes a source update, a public projection
 change, a project-local note, or no change.
 
+## Projection Decision
+
+Before private COS material becomes CompanyOS content, decide:
+
+- whether the source object is active, limited, candidate, template, or draft;
+- which private source layer it comes from;
+- whether the target is a runtime-kit object, template, schema, adapter, or
+  sanitized example;
+- what the public object is projected as;
+- whether the content is public-safe after redaction;
+- whether candidate material is bounded as template-only, feedback-shape-only,
+  schema-under-review-only, sanitized-example-only, or blocked;
+- whether it would mislead users into treating CompanyOS as the full private
+  COS source;
+- which release boundary prevents overclaiming;
+- which validation command proves the projected object is structurally usable.
+
+Candidate material may become a public-safe template, schema, adapter note, or
+feedback shape. It must not become an active CompanyOS rule unless maintainers
+have approved that projection.
+
+Projection decision records should satisfy:
+
+```text
+runtime/projection-decision.schema.json
+```
+
+Maintainers can draft a local decision record with:
+
+```powershell
+.\bin\company-os.ps1 new-projection -SourceObject "<source>" -SourceStatus template -SourceLayer distribution_projection -ProjectionTarget "<target>" -ProjectedAs template -CandidatePublicBoundary not_candidate
+```
+
+CompanyOS should expose the resulting runtime mechanism, not the private source
+reasoning, internal research trail, unpublished strategy, or candidate
+rationale.

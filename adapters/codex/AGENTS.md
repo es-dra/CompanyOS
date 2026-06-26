@@ -12,6 +12,9 @@ Startup order:
 6. Keep evidence states from `core/evidence-states.md` separate.
 7. Record reusable friction or patterns as feedback candidates, not durable
    rules.
+8. Do not treat CompanyOS as the private source system. If a task needs a new
+   rule, export a feedback candidate for maintainer review instead of changing
+   operating doctrine directly.
 
 Do not copy private Company OS source material, secrets, customer files, real
 costs, signed URLs, provider raw responses, or generated media bytes into a

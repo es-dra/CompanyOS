@@ -1,0 +1,46 @@
+{
+  "project_id": "safe-example",
+  "project_name": "Safe Example Project",
+  "repository": "https://example.com/org/safe-example.git",
+  "default_branch": "main",
+  "product_surface": "local CLI demo",
+  "runtime_boundary": "project CLI and public-safe files only",
+  "required_reading": [
+    "AGENTS.md",
+    "README.md",
+    "CompanyOS/adapters/codex/AGENTS.md"
+  ],
+  "context_pack": [
+    "core/authority-order.md",
+    "core/evidence-states.md",
+    "gfr/startup-contract.md"
+  ],
+  "allowed_write_scope": [
+    "docs/",
+    "tests/",
+    "src/"
+  ],
+  "forbidden_material": [
+    "secrets",
+    "customer material",
+    "real costs",
+    "signed URLs",
+    "raw provider responses",
+    "generated media bytes",
+    "private Company OS source material"
+  ],
+  "verification": [
+    "project-specific tests",
+    "git diff --check"
+  ],
+  "feedback_route": {
+    "project_handoff": "docs/handoff/",
+    "companyos_feedback": "~/.company-os/feedback-outbox/",
+    "maintainer_review": "project maintainer"
+  },
+  "companyos_boundary": {
+    "uses_runtime_kit": true,
+    "does_not_override_project_rules": true,
+    "does_not_include_private_source": true
+  }
+}

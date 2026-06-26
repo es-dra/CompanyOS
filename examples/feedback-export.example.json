@@ -1,0 +1,19 @@
+{
+  "export_id": "example-feedback-export",
+  "created_at": "2026-06-27T00:00:00Z",
+  "runtime_kit_version": "0.1.0",
+  "source_machine_label": "safe-example-machine",
+  "redaction_status": "redacted",
+  "items": [
+    {
+      "item_id": "example-workflow-gap",
+      "kind": "workflow_gap",
+      "summary": "The project adoption packet should state the required read scope before task execution starts.",
+      "source_scope": "safe example project task",
+      "evidence_refs": [
+        "project-adoption.example.json"
+      ],
+      "recommended_route": "candidate_rule"
+    }
+  ]
+}

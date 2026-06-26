@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/company-os/project-adoption.schema.json",
+  "title": "Company OS Project Adoption",
+  "type": "object",
+  "required": [
+    "project_id",
+    "project_name",
+    "repository",
+    "default_branch",
+    "product_surface",
+    "runtime_boundary",
+    "required_reading",
+    "forbidden_material",
+    "verification",
+    "feedback_route",
+    "companyos_boundary"
+  ],
+  "properties": {
+    "project_id": { "type": "string", "minLength": 1 },
+    "project_name": { "type": "string", "minLength": 1 },
+    "repository": { "type": "string", "minLength": 1 },
+    "default_branch": { "type": "string", "minLength": 1 },
+    "product_surface": { "type": "string", "minLength": 1 },
+    "runtime_boundary": { "type": "string", "minLength": 1 },
+    "required_reading": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "context_pack": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "allowed_write_scope": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "forbidden_material": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "verification": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "feedback_route": {
+      "type": "object",
+      "required": ["project_handoff", "companyos_feedback", "maintainer_review"],
+      "properties": {
+        "project_handoff": { "type": "string", "minLength": 1 },
+        "companyos_feedback": { "type": "string", "minLength": 1 },
+        "maintainer_review": { "type": "string", "minLength": 1 }
+      }
+    },
+    "companyos_boundary": {
+      "type": "object",
+      "required": ["uses_runtime_kit", "does_not_override_project_rules", "does_not_include_private_source"],
+      "properties": {
+        "uses_runtime_kit": { "type": "boolean" },
+        "does_not_override_project_rules": { "type": "boolean" },
+        "does_not_include_private_source": { "type": "boolean" }
+      }
+    }
+  }
+}

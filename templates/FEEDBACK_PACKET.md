@@ -18,6 +18,15 @@
 - what happened:
 - why it matters:
 - repeatability:
+- source scope:
+
+## Candidate Boundary
+
+- is this reusable beyond the current project:
+- proposed owner review:
+- evidence still missing:
+- private-source material involved: yes/no
+- public projection risk:
 
 ## Proposed Route
 

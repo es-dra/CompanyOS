@@ -4,6 +4,8 @@ Use this template when a project opts into CompanyOS.
 
 ## Project
 
+- Project id:
+- Project name:
 - Repository:
 - Default branch:
 - Main product surface:
@@ -17,6 +19,7 @@ Use this template when a project opts into CompanyOS.
 - Task tracker:
 - Architecture docs:
 - CompanyOS adapter:
+- Default context pack:
 
 ## Local Setup
 
@@ -61,6 +64,13 @@ This project must not store:
 - real costs;
 - generated media bytes unless explicitly allowed by project policy.
 
+## Scope
+
+- Allowed read scope:
+- Allowed write scope:
+- Forbidden paths/material:
+- Human approval required for:
+
 ## Verification
 
 Project verification:
@@ -82,3 +92,10 @@ git diff --check
 - CompanyOS feedback candidate path:
 - Maintainer review owner:
 
+## Machine-Readable Minimum
+
+Project adoption records should satisfy:
+
+```text
+runtime/project-adoption.schema.json
+```

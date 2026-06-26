@@ -92,8 +92,8 @@ task request
 core/                 authority order and evidence-state rules
 full-stack/           professional software engineering standards
 gfr/                  task startup compiler contract
-runtime/              taskrun and feedback export schemas
-templates/            startup packet and feedback packet templates
+runtime/              taskrun, project adoption, projection decision, and feedback export schemas
+templates/            startup, adoption, projection, and feedback templates
 adapters/codex/       Codex-facing project instruction adapter
 bin/                  lightweight local commands
 privacy/              redaction and exclusion policy
@@ -118,7 +118,7 @@ full-stack/engineering-standard.md
 Create a local taskrun log:
 
 ```powershell
-.\bin\company-os.ps1 new-taskrun -Project AFS -Summary "runtime smoke" -EvidenceState structure_verification
+.\bin\company-os.ps1 new-taskrun -Project Example -TaskClass "runtime smoke" -Summary "local verification" -EvidenceState structure_verification
 ```
 
 By default, logs are written to:
@@ -133,6 +133,31 @@ Feedback packet drafts should be written to:
 ~/.company-os/feedback-outbox/
 ```
 
+Create a local feedback export draft:
+
+```powershell
+.\bin\company-os.ps1 new-feedback -Summary "project startup packet needs clearer read scope" -Kind workflow_gap -RecommendedRoute owner_review
+```
+
+Feedback drafts default to `requires_review`; maintainers decide whether they
+become project notes, candidate rules, tooling issues, or discarded signals.
+
+Create a local projection decision draft before source-to-runtime projection:
+
+```powershell
+.\bin\company-os.ps1 new-projection -SourceObject "Project adoption template" -SourceStatus template -SourceLayer distribution_projection -ProjectionTarget "templates/PROJECT_COMPANYOS_ADOPTION.md" -ProjectedAs template -CandidatePublicBoundary not_candidate -PublicSafe -RedactionStatus redacted -Decision project
+```
+
+Projection drafts are written to:
+
+```text
+~/.company-os/projection-decisions/
+```
+
+Candidate source material must stay bounded as template-only, feedback-shape,
+schema-under-review, sanitized-example, or blocked. It must not be projected as
+an active CompanyOS rule.
+
 ## Source Sync And Onboarding
 
 For the repository/source boundary, read:
@@ -146,6 +171,7 @@ For adding new contributors or agent users, read:
 ```text
 docs/contributor-onboarding.md
 templates/PROJECT_COMPANYOS_ADOPTION.md
+templates/PROJECTION_DECISION.md
 ```
 
 ## Codex Integration Boundary

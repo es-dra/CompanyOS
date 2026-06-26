@@ -29,9 +29,18 @@
           "item_id": { "type": "string" },
           "kind": {
             "type": "string",
-            "enum": ["rule_friction", "workflow_gap", "tooling_gap", "evidence_gap", "successful_pattern"]
+            "enum": [
+              "rule_friction",
+              "workflow_gap",
+              "tooling_gap",
+              "evidence_gap",
+              "context_gap",
+              "projection_gap",
+              "successful_pattern"
+            ]
           },
           "summary": { "type": "string" },
+          "source_scope": { "type": "string" },
           "evidence_refs": {
             "type": "array",
             "items": { "type": "string" }

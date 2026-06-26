@@ -24,6 +24,9 @@ git pull --ff-only
 ## Working On A Project
 
 Each project should keep its own repository and its own local instructions.
+If a project opts into CompanyOS, it should keep or reference a project adoption
+packet that states required reading, forbidden material, verification commands,
+and feedback routes.
 
 Recommended flow:
 
@@ -72,6 +75,13 @@ git diff --check
 Do not claim human acceptance, business validation, or durable rule promotion
 from tests alone.
 
+## New Ideas
+
+New operating ideas should arrive as feedback candidates unless a maintainer
+has already approved the change. CompanyOS contributors do not need access to
+the private source system or its research trail to make a useful public-safe
+contribution.
+
 ## AFS Example
 
 For AgentFlow Studio, new contributors should start from:
@@ -87,4 +97,3 @@ docs/CONTRIBUTOR_ONBOARDING.md
 AFS contributors should not copy private Company OS source material, provider
 secrets, raw provider responses, signed URLs, generated media bytes, customer
 material, or real costs into the AFS repository.
-

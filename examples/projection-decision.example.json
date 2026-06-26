@@ -1,0 +1,28 @@
+{
+  "decision_id": "example-projection-decision",
+  "created_at": "2026-06-27T00:00:00Z",
+  "source_object": "Project Adoption Packet",
+  "source_status": "template",
+  "source_layer": "distribution_projection",
+  "source_path": "private-source-placeholder",
+  "projection_target": "templates/PROJECT_COMPANYOS_ADOPTION.md",
+  "projected_as": "template",
+  "public_safe": true,
+  "redaction_status": "redacted",
+  "private_material_risk": [],
+  "candidate_public_boundary": "not_candidate",
+  "misleading_identity_risk": "low: keeps CompanyOS positioned as runtime kit, not full private COS",
+  "release_boundary": [
+    "CompanyOS is a runtime kit, not the full private COS source.",
+    "This example validates projection-decision shape only."
+  ],
+  "decision": "project",
+  "validation": [
+    {
+      "command": ".\\bin\\company-os.ps1 validate",
+      "status": "planned",
+      "notes": "Example record for schema validation."
+    }
+  ],
+  "owner_review": "maintainer"
+}

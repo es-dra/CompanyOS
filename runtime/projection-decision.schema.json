@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/company-os/projection-decision.schema.json",
+  "title": "Company OS Projection Decision",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "created_at",
+    "source_object",
+    "source_status",
+    "source_layer",
+    "projection_target",
+    "projected_as",
+    "public_safe",
+    "redaction_status",
+    "candidate_public_boundary",
+    "release_boundary",
+    "decision",
+    "validation"
+  ],
+  "properties": {
+    "decision_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "source_object": { "type": "string", "minLength": 1 },
+    "source_status": {
+      "type": "string",
+      "enum": ["active", "active_positioning", "limited", "candidate", "draft", "historical_draft", "template", "retired"]
+    },
+    "source_layer": {
+      "type": "string",
+      "enum": [
+        "doctrine",
+        "control_plane",
+        "project_capsule",
+        "method",
+        "evidence",
+        "feedback_promotion",
+        "distribution_projection",
+        "external_signal_intake",
+        "unknown"
+      ]
+    },
+    "source_path": { "type": "string" },
+    "projection_target": { "type": "string", "minLength": 1 },
+    "projected_as": {
+      "type": "string",
+      "enum": [
+        "public_rule",
+        "public_positioning",
+        "bounded_guidance",
+        "runtime_contract",
+        "schema",
+        "template",
+        "adapter_guidance",
+        "redaction_policy",
+        "validation_command",
+        "sanitized_example",
+        "project_adoption_packet",
+        "feedback_export_shape",
+        "draft_template",
+        "schema_under_review",
+        "migration_note",
+        "public_safe_method_summary"
+      ]
+    },
+    "public_safe": { "type": "boolean" },
+    "redaction_status": {
+      "type": "string",
+      "enum": ["redacted", "requires_review", "blocked"]
+    },
+    "private_material_risk": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "candidate_public_boundary": {
+      "type": "string",
+      "enum": [
+        "not_candidate",
+        "template_only",
+        "feedback_shape_only",
+        "schema_under_review_only",
+        "sanitized_example_only",
+        "blocked"
+      ]
+    },
+    "misleading_identity_risk": { "type": "string" },
+    "release_boundary": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["project", "defer", "block"]
+    },
+    "validation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "status"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "minLength": 1 },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "owner_review": { "type": "string" }
+  }
+}

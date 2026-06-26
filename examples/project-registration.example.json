@@ -2,6 +2,7 @@
   "project_id": "example-project",
   "project_name": "Example Project",
   "project_root": "./",
+  "adoption_packet": "examples/project-adoption.example.json",
   "instruction_files": [
     "AGENTS.md"
   ],
@@ -9,6 +10,12 @@
     "core/authority-order.md",
     "core/evidence-states.md",
     "gfr/startup-contract.md"
+  ],
+  "forbidden_material": [
+    "private Company OS source material",
+    "secrets",
+    "raw provider responses",
+    "generated media bytes"
   ],
   "feedback_enabled": true,
   "private_material_policy": "exclude_from_public_exports"

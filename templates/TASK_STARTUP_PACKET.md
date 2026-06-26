@@ -5,9 +5,13 @@
 - role:
 - task class:
 - responsibility:
+- project:
+- task summary:
 
 ## Context Pack
 
+- project adoption ref:
+- startup packet ref:
 - required files:
 - project instructions:
 - excluded files:
@@ -36,9 +40,11 @@
 - commands:
 - artifacts:
 - expected evidence state:
+- non-claims:
 
 ## Feedback Route
 
 - feedback candidate: yes/no
 - route:
 - non-claim boundary:
+- owner review needed:
