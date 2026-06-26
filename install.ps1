@@ -21,7 +21,7 @@ if (Test-Path -LiteralPath $InstallRoot) {
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 
-$items = @("AGENTS.md", "LICENSE", "README.md", "VERSION", "bin", "core", "gfr", "runtime", "templates", "adapters", "privacy", "examples")
+$items = @("AGENTS.md", "LICENSE", "README.md", "VERSION", "bin", "core", "full-stack", "gfr", "runtime", "templates", "adapters", "privacy", "examples")
 foreach ($item in $items) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot $item) -Destination $InstallRoot -Recurse -Force
 }

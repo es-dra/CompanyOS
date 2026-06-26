@@ -6,10 +6,11 @@ Startup order:
 
 1. Read the project-local instructions.
 2. Apply `core/authority-order.md`.
-3. Use `gfr/startup-contract.md` to classify the task.
-4. Create or mentally compile a task startup packet.
-5. Keep evidence states from `core/evidence-states.md` separate.
-6. Record reusable friction or patterns as feedback candidates, not durable
+3. Read `full-stack/engineering-standard.md` for software work.
+4. Use `gfr/startup-contract.md` to classify the task.
+5. Create or mentally compile a task startup packet.
+6. Keep evidence states from `core/evidence-states.md` separate.
+7. Record reusable friction or patterns as feedback candidates, not durable
    rules.
 
 Do not copy private Company OS source material, secrets, customer files, real

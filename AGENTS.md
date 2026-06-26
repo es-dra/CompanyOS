@@ -22,8 +22,9 @@ For substantial work:
 1. Read `README.md`.
 2. Read `core/authority-order.md`.
 3. Read `core/evidence-states.md`.
-4. Read `gfr/startup-contract.md`.
-5. Define the write scope and verification command before editing.
+4. Read `full-stack/engineering-standard.md` for software work.
+5. Read `gfr/startup-contract.md`.
+6. Define the write scope and verification command before editing.
 
 ## Verification
 

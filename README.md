@@ -6,6 +6,7 @@ OS.
 It gives a developer machine a repeatable operating surface for:
 
 - task startup and context selection;
+- full-stack engineering boundaries;
 - evidence-state discipline;
 - provider and tool gate boundaries;
 - local taskrun logging;
@@ -89,6 +90,7 @@ task request
 
 ```text
 core/                 authority order and evidence-state rules
+full-stack/           professional software engineering standards
 gfr/                  task startup compiler contract
 runtime/              taskrun and feedback export schemas
 templates/            startup packet and feedback packet templates
@@ -104,6 +106,12 @@ Validate the runtime kit files:
 
 ```powershell
 .\bin\company-os.ps1 validate
+```
+
+Read the full-stack standard:
+
+```text
+full-stack/engineering-standard.md
 ```
 
 Create a local taskrun log:
