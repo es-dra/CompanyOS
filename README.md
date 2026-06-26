@@ -98,6 +98,7 @@ adapters/codex/       Codex-facing project instruction adapter
 bin/                  lightweight local commands
 privacy/              redaction and exclusion policy
 examples/             safe example project registration
+docs/                 source sync and contributor onboarding guides
 ```
 
 ## Local Commands
@@ -130,6 +131,21 @@ Feedback packet drafts should be written to:
 
 ```text
 ~/.company-os/feedback-outbox/
+```
+
+## Source Sync And Onboarding
+
+For the repository/source boundary, read:
+
+```text
+docs/source-sync.md
+```
+
+For adding new contributors or agent users, read:
+
+```text
+docs/contributor-onboarding.md
+templates/PROJECT_COMPANYOS_ADOPTION.md
 ```
 
 ## Codex Integration Boundary

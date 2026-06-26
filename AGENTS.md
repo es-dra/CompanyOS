@@ -24,7 +24,9 @@ For substantial work:
 3. Read `core/evidence-states.md`.
 4. Read `full-stack/engineering-standard.md` for software work.
 5. Read `gfr/startup-contract.md`.
-6. Define the write scope and verification command before editing.
+6. Read `docs/source-sync.md` for distribution, projection, or feedback changes.
+7. Read `docs/contributor-onboarding.md` for collaborator onboarding changes.
+8. Define the write scope and verification command before editing.
 
 ## Verification
 

@@ -9,7 +9,7 @@ mkdir -p "$COMPANY_HOME/runs" "$COMPANY_HOME/feedback-outbox" "$COMPANY_HOME/pro
 rm -rf "$INSTALL_ROOT"
 mkdir -p "$INSTALL_ROOT"
 
-for item in AGENTS.md LICENSE README.md VERSION bin core full-stack gfr runtime templates adapters privacy examples; do
+for item in AGENTS.md LICENSE README.md VERSION bin core full-stack gfr runtime templates adapters privacy examples docs; do
   cp -R "$SOURCE_ROOT/$item" "$INSTALL_ROOT/"
 done
 

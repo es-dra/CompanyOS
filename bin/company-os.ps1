@@ -41,8 +41,11 @@ function Invoke-Validate {
         "runtime\feedback-export.schema.json",
         "templates\TASK_STARTUP_PACKET.md",
         "templates\FEEDBACK_PACKET.md",
+        "templates\PROJECT_COMPANYOS_ADOPTION.md",
         "privacy\redaction-policy.md",
-        "adapters\codex\AGENTS.md"
+        "adapters\codex\AGENTS.md",
+        "docs\source-sync.md",
+        "docs\contributor-onboarding.md"
     )
 
     foreach ($item in $required) {
