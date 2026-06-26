@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/company-os/feedback-export.schema.json",
+  "title": "Company OS Feedback Export",
+  "type": "object",
+  "required": [
+    "export_id",
+    "created_at",
+    "runtime_kit_version",
+    "source_machine_label",
+    "redaction_status",
+    "items"
+  ],
+  "properties": {
+    "export_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "runtime_kit_version": { "type": "string" },
+    "source_machine_label": { "type": "string" },
+    "redaction_status": {
+      "type": "string",
+      "enum": ["redacted", "requires_review", "blocked"]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "kind", "summary", "recommended_route"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["rule_friction", "workflow_gap", "tooling_gap", "evidence_gap", "successful_pattern"]
+          },
+          "summary": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "recommended_route": {
+            "type": "string",
+            "enum": ["candidate_rule", "project_handoff", "tooling_issue", "discard", "owner_review"]
+          }
+        }
+      }
+    }
+  }
+}

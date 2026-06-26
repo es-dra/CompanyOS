@@ -1,0 +1,15 @@
+{
+  "project_id": "example-project",
+  "project_name": "Example Project",
+  "project_root": "./",
+  "instruction_files": [
+    "AGENTS.md"
+  ],
+  "default_context_pack": [
+    "core/authority-order.md",
+    "core/evidence-states.md",
+    "gfr/startup-contract.md"
+  ],
+  "feedback_enabled": true,
+  "private_material_policy": "exclude_from_public_exports"
+}

@@ -1,0 +1,29 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Runtime output
+.company-os/
+runs/
+feedback-outbox/
+exports/
+*.zip
+
+# Secrets and local config
+.env
+*.env
+*.secret
+*.key
+*.pem
+config.local.*
+providers.local.json
+
+# Python / Node caches
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+coverage/

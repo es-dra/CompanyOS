@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/company-os/taskrun-log.schema.json",
+  "title": "Company OS Taskrun Log",
+  "type": "object",
+  "required": [
+    "taskrun_id",
+    "started_at",
+    "runtime_kit_version",
+    "project",
+    "task_summary",
+    "evidence_state",
+    "verification",
+    "non_claims"
+  ],
+  "properties": {
+    "taskrun_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "ended_at": { "type": "string" },
+    "runtime_kit_version": { "type": "string" },
+    "project": { "type": "string" },
+    "task_summary": { "type": "string" },
+    "context_pack": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence_state": {
+      "type": "string",
+      "enum": [
+        "structure_verification",
+        "runtime_verification",
+        "provider_smoke",
+        "human_acceptance",
+        "business_validation",
+        "durable_rule_promotion",
+        "not_verified"
+      ]
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "status"],
+        "properties": {
+          "command": { "type": "string" },
+          "status": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "non_claims": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "feedback_candidate": { "type": "boolean" }
+  }
+}
