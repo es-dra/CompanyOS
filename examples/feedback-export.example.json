@@ -1,7 +1,7 @@
 {
   "export_id": "example-feedback-export",
   "created_at": "2026-06-27T00:00:00Z",
-  "runtime_kit_version": "0.1.0",
+  "runtime_kit_version": "0.2.0.dev1",
   "source_machine_label": "safe-example-machine",
   "redaction_status": "redacted",
   "items": [

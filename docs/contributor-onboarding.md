@@ -33,11 +33,12 @@ Recommended flow:
 ```text
 read project AGENTS.md
   -> read CompanyOS adapter guidance
-  -> classify task with GFR startup contract
+  -> author and compile GoalSpec / TaskSpec
   -> create a branch
   -> implement
-  -> verify
-  -> open PR or handoff
+  -> typed evidence and independent evaluation
+  -> Integration Queue / runtime freshness
+  -> open PR, release route, or handoff
 ```
 
 Use a feature branch:
@@ -72,7 +73,8 @@ when CompanyOS files changed:
 git diff --check
 ```
 
-Do not claim human acceptance, business validation, or durable rule promotion
+Do not claim human acceptance, business validation, durable memory promotion,
+or active-rule promotion
 from tests alone.
 
 ## New Ideas
@@ -81,19 +83,3 @@ New operating ideas should arrive as feedback candidates unless a maintainer
 has already approved the change. CompanyOS contributors do not need access to
 the private source system or its research trail to make a useful public-safe
 contribution.
-
-## AFS Example
-
-For AgentFlow Studio, new contributors should start from:
-
-```text
-AGENTS.md
-docs/company_operating_model.md
-docs/GFR_EXECUTION_PROJECTION.md
-TASK_TRACKER.md
-docs/CONTRIBUTOR_ONBOARDING.md
-```
-
-AFS contributors should not copy private Company OS source material, provider
-secrets, raw provider responses, signed URLs, generated media bytes, customer
-material, or real costs into the AFS repository.

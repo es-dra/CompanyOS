@@ -2,7 +2,7 @@
 
 ## Summary
 
-- taskrun id:
+- run id:
 - project:
 - date:
 - short summary:

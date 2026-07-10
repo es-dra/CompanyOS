@@ -8,11 +8,14 @@ Startup order:
 2. Apply `core/authority-order.md`.
 3. Read `full-stack/engineering-standard.md` for software work.
 4. Use `gfr/startup-contract.md` to classify the task.
-5. Create or mentally compile a task startup packet.
+5. Create an AOS Startup Packet and human Goal/Task authoring packets when the
+   task is substantial, then compile strict GoalSpec/TaskSpec before execution.
 6. Keep evidence states from `core/evidence-states.md` separate.
 7. Record reusable friction or patterns as feedback candidates, not durable
    rules.
-8. Do not treat CompanyOS as the private source system. If a task needs a new
+8. Never accept caller-supplied guard booleans as evidence; read the persisted
+   Evidence, Evaluator, Integration Queue, lease, grant, and freshness ledgers.
+9. Do not treat CompanyOS as the private source system. If a task needs a new
    rule, export a feedback candidate for maintainer review instead of changing
    operating doctrine directly.
 

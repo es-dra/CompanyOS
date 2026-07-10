@@ -51,7 +51,7 @@ This project may use:
 - GFR startup contract;
 - full-stack engineering standard;
 - evidence states;
-- taskrun logs;
+- run logs;
 - feedback packet templates.
 
 This project must not store:
