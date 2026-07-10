@@ -1,0 +1,543 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://companyos.dev/contracts/v1/runtime-contracts.schema.json",
+  "title": "CompanyOS Runtime Contract Bundle v1",
+  "description": "Canonical public-safe wire contracts. Authoring packets are compiled into GoalSpec and TaskSpec before execution.",
+  "oneOf": [
+    { "$ref": "#/$defs/GoalSpec" },
+    { "$ref": "#/$defs/TaskSpec" },
+    { "$ref": "#/$defs/EventEnvelope" },
+    { "$ref": "#/$defs/EvidenceClaim" },
+    { "$ref": "#/$defs/RuntimeObservation" },
+    { "$ref": "#/$defs/CapabilityGrant" },
+    { "$ref": "#/$defs/EvalRun" },
+    { "$ref": "#/$defs/IntegrationItem" },
+    { "$ref": "#/$defs/ContextItem" },
+    { "$ref": "#/$defs/MemoryItem" },
+    { "$ref": "#/$defs/Approval" },
+    { "$ref": "#/$defs/Lease" },
+    { "$ref": "#/$defs/TaskAttempt" },
+    { "$ref": "#/$defs/OutboxEffect" },
+    { "$ref": "#/$defs/EffectReceipt" },
+    { "$ref": "#/$defs/NegativeResult" },
+    { "$ref": "#/$defs/ImprovementProposal" },
+    { "$ref": "#/$defs/ActiveRulePromotionRecord" }
+  ],
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Segment-safe path or URI scope; '..' and arbitrary wildcards are forbidden by runtime validation."
+    },
+    "EvidenceState": {
+      "enum": [
+        "structure_verification",
+        "runtime_verification",
+        "provider_smoke",
+        "human_acceptance",
+        "business_validation",
+        "durable_memory_promotion",
+        "active_rule_promotion"
+      ]
+    },
+    "Capability": {
+      "enum": [
+        "read_local",
+        "write_local",
+        "network",
+        "external_download",
+        "repo_remote",
+        "server_read",
+        "server_write",
+        "provider_cost",
+        "public_release",
+        "destructive",
+        "durable_memory_promotion",
+        "active_rule_promotion",
+        "control_resume"
+      ]
+    },
+    "RuntimeSurfaceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface_key", "target_identity", "allowed_probes"],
+      "properties": {
+        "surface_key": { "$ref": "#/$defs/NonEmptyString" },
+        "target_identity": { "$ref": "#/$defs/NonEmptyString" },
+        "allowed_probes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "max_ttl_seconds": { "type": "integer", "minimum": 1, "maximum": 86400, "default": 300 },
+        "trigger_event_required": { "type": "boolean", "default": true }
+      }
+    },
+    "GoalSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal_id", "target_outcome", "success_evidence_states"],
+      "properties": {
+        "goal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "target_outcome": { "$ref": "#/$defs/NonEmptyString" },
+        "success_evidence_states": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/EvidenceState" }
+        },
+        "read_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "write_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "forbidden_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "allowed_capabilities": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Capability" }, "default": ["read_local"] },
+        "required_runtime_surfaces": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/RuntimeSurfaceSpec" }, "default": [] },
+        "evaluator_required": { "type": "boolean", "default": false },
+        "max_iterations_without_evidence": { "type": "integer", "minimum": 1, "default": 3 },
+        "provider_budget_minor_units": { "type": "integer", "minimum": 0, "default": 0 },
+        "provider_call_limit": { "type": "integer", "minimum": 0, "default": 0 },
+        "budget_currency": { "type": "string", "pattern": "^[A-Z]{3}$", "default": "USD" },
+        "non_goals": { "type": "array", "items": { "$ref": "#/$defs/NonEmptyString" }, "default": [] }
+      }
+    },
+    "WorkflowStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "adapter", "action", "resource", "request_digest"],
+      "properties": {
+        "step_id": { "$ref": "#/$defs/NonEmptyString" },
+        "adapter": { "$ref": "#/$defs/NonEmptyString" },
+        "action": { "$ref": "#/$defs/NonEmptyString" },
+        "resource": { "$ref": "#/$defs/NonEmptyString" },
+        "request_digest": { "$ref": "#/$defs/Digest" }
+      }
+    },
+    "TaskSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "goal_id", "objective", "expected_delta", "primary_surface", "evidence_target"],
+      "properties": {
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "goal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "objective": { "$ref": "#/$defs/NonEmptyString" },
+        "expected_delta": { "$ref": "#/$defs/NonEmptyString" },
+        "primary_surface": { "$ref": "#/$defs/NonEmptyString" },
+        "evidence_target": { "$ref": "#/$defs/EvidenceState" },
+        "capabilities": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Capability" }, "default": ["read_local"] },
+        "read_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "write_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "forbidden_scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Scope" }, "default": [] },
+        "required_runtime_surfaces": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/RuntimeSurfaceSpec" }, "default": [] },
+        "evaluator_required": { "type": "boolean", "default": false },
+        "integration_required": { "type": "boolean", "default": true },
+        "workflow_steps": { "type": "array", "items": { "$ref": "#/$defs/WorkflowStep" }, "default": [] },
+        "max_attempts": { "type": "integer", "minimum": 1, "default": 3 }
+      }
+    },
+    "EventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id", "aggregate_type", "aggregate_id", "aggregate_version",
+        "project_id", "event_type", "schema_version", "actor", "auth_context",
+        "command_id", "correlation_id", "policy_version", "occurred_at",
+        "recorded_at", "confidentiality", "payload", "payload_digest",
+        "previous_event_hash", "event_hash"
+      ],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/NonEmptyString" },
+        "aggregate_type": { "$ref": "#/$defs/NonEmptyString" },
+        "aggregate_id": { "$ref": "#/$defs/NonEmptyString" },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "type": ["string", "null"] },
+        "task_id": { "type": ["string", "null"] },
+        "event_type": { "$ref": "#/$defs/NonEmptyString" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "actor": { "$ref": "#/$defs/NonEmptyString" },
+        "auth_context": { "type": "object" },
+        "command_id": { "$ref": "#/$defs/NonEmptyString" },
+        "idempotency_key": { "type": ["string", "null"] },
+        "correlation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "causation_id": { "type": ["string", "null"] },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "occurred_at": { "$ref": "#/$defs/Timestamp" },
+        "recorded_at": { "$ref": "#/$defs/Timestamp" },
+        "confidentiality": { "enum": ["public", "publicable", "internal", "confidential", "secret"] },
+        "payload": { "type": "object" },
+        "payload_digest": { "$ref": "#/$defs/Digest" },
+        "previous_event_hash": { "type": "string", "minLength": 7 },
+        "event_hash": { "$ref": "#/$defs/Digest" }
+      }
+    },
+    "EvidenceClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "project_id", "run_id", "task_id", "claim", "evidence_state", "artifact_refs", "verifier", "verifier_version", "environment", "evaluator_verdict", "non_claims", "created_at"],
+      "properties": {
+        "evidence_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "claim": { "$ref": "#/$defs/NonEmptyString" },
+        "evidence_state": { "$ref": "#/$defs/EvidenceState" },
+        "artifact_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "verifier": { "$ref": "#/$defs/NonEmptyString" },
+        "verifier_version": { "$ref": "#/$defs/NonEmptyString" },
+        "environment": { "$ref": "#/$defs/NonEmptyString" },
+        "evaluator_verdict": { "enum": ["not_required", "pending", "pass", "fail", "pass_with_residual_risk", "blocked_with_decision"] },
+        "non_claims": { "type": "array", "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "RuntimeObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation_id", "project_id", "run_id", "surface_key", "target_identity", "observer", "probe_name", "probe_version", "status", "value", "value_digest", "observed_at", "recorded_at", "expires_at"],
+      "properties": {
+        "observation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "surface_key": { "$ref": "#/$defs/NonEmptyString" },
+        "target_identity": { "$ref": "#/$defs/NonEmptyString" },
+        "observer": { "$ref": "#/$defs/NonEmptyString" },
+        "probe_name": { "$ref": "#/$defs/NonEmptyString" },
+        "probe_version": { "$ref": "#/$defs/NonEmptyString" },
+        "trigger_event_id": { "type": ["string", "null"] },
+        "status": { "enum": ["healthy", "ok", "pass", "degraded", "unhealthy", "failed", "unknown"] },
+        "value": { "type": "object" },
+        "value_digest": { "$ref": "#/$defs/Digest" },
+        "observed_at": { "$ref": "#/$defs/Timestamp" },
+        "recorded_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "CapabilityGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grant_id", "project_id", "goal_id", "run_id", "task_id", "approval_id", "issuer", "principal", "capability", "action", "resource", "request_digest", "policy_version", "not_before", "expires_at", "max_uses", "used_count", "cost_limit", "cost_used"],
+      "properties": {
+        "grant_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "goal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "approval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "issuer": { "$ref": "#/$defs/NonEmptyString" },
+        "principal": { "$ref": "#/$defs/NonEmptyString" },
+        "capability": { "$ref": "#/$defs/Capability" },
+        "action": { "$ref": "#/$defs/NonEmptyString" },
+        "resource": { "$ref": "#/$defs/Scope" },
+        "request_digest": { "$ref": "#/$defs/Digest" },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "not_before": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" },
+        "max_uses": { "type": "integer", "minimum": 1 },
+        "used_count": { "type": "integer", "minimum": 0 },
+        "cost_limit": { "type": "integer", "minimum": 0, "description": "Reserved provider budget in GoalSpec.budget_currency minor units." },
+        "cost_used": { "type": "integer", "minimum": 0, "description": "Consumed provider budget in GoalSpec.budget_currency minor units." },
+        "required_fence": { "type": ["integer", "null"], "minimum": 1 },
+        "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "EvalRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eval_id", "project_id", "candidate_digest", "dataset_name", "dataset_split", "dataset_digest", "evaluator", "evaluator_version", "status", "metrics", "safety_failures", "attestation_id", "attestation_digest", "created_at"],
+      "properties": {
+        "eval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_digest": { "$ref": "#/$defs/Digest" },
+        "dataset_name": { "$ref": "#/$defs/NonEmptyString" },
+        "dataset_split": { "enum": ["held_in", "held_out", "sealed"] },
+        "dataset_digest": { "$ref": "#/$defs/Digest" },
+        "evaluator": { "$ref": "#/$defs/NonEmptyString" },
+        "evaluator_version": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "enum": ["pass", "fail", "error"] },
+        "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+        "safety_failures": { "type": "array", "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "attestation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "attestation_digest": { "$ref": "#/$defs/Digest" },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "IntegrationItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integration_id", "project_id", "run_id", "task_id", "state", "source_ref", "target_ref", "owner", "evidence_refs", "updated_at"],
+      "properties": {
+        "integration_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "state": { "enum": ["review_pending", "evaluator_pending", "push_pr_pending", "ci_pending", "ci_failed", "merge_pending", "deploy_pending", "deploy_dir_updated", "service_restart_required", "runtime_check_pending", "runtime_stale", "delete_pending", "retire_pending", "delivered", "defer_with_owner", "superseded"] },
+        "source_ref": { "$ref": "#/$defs/NonEmptyString" },
+        "target_ref": { "$ref": "#/$defs/NonEmptyString" },
+        "owner": { "$ref": "#/$defs/NonEmptyString" },
+        "evidence_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "updated_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ContextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_id", "project_id", "scope", "source_ref", "source_digest", "content", "classification", "normative_status", "priority", "token_estimate", "observed_at", "effective_at", "created_at"],
+      "properties": {
+        "context_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "source_ref": { "$ref": "#/$defs/NonEmptyString" },
+        "source_digest": { "$ref": "#/$defs/Digest" },
+        "content": { "$ref": "#/$defs/NonEmptyString" },
+        "classification": { "enum": ["public", "publicable", "internal", "private", "confidential", "secret"] },
+        "normative_status": { "enum": ["active", "limited", "candidate", "draft", "historical_draft", "rejected", "retired"] },
+        "priority": { "type": "integer" },
+        "token_estimate": { "type": "integer", "minimum": 0 },
+        "observed_at": { "$ref": "#/$defs/Timestamp" },
+        "effective_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "supersedes": { "type": ["string", "null"] },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "MemoryItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_id", "project_id", "source_evidence_id", "source_digest", "scope", "classification", "content", "status", "effective_at", "created_at"],
+      "properties": {
+        "memory_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "source_evidence_id": { "$ref": "#/$defs/NonEmptyString" },
+        "source_digest": { "$ref": "#/$defs/Digest" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "classification": { "enum": ["public", "publicable", "internal", "private", "confidential", "secret"] },
+        "content": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "enum": ["candidate", "limited", "active", "retired"] },
+        "effective_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "supersedes": { "type": ["string", "null"] },
+        "promotion_approval_id": { "type": ["string", "null"] },
+        "heldout_eval_id": { "type": ["string", "null"] },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approval_id", "project_id", "goal_id", "run_id", "task_id", "requester", "approver", "capability", "action", "resource", "request_digest", "policy_version", "decision", "requested_at", "decided_at", "expires_at"],
+      "properties": {
+        "approval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "goal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "requester": { "$ref": "#/$defs/NonEmptyString" },
+        "approver": { "$ref": "#/$defs/NonEmptyString" },
+        "capability": { "$ref": "#/$defs/Capability" },
+        "action": { "$ref": "#/$defs/NonEmptyString" },
+        "resource": { "$ref": "#/$defs/Scope" },
+        "request_digest": { "$ref": "#/$defs/Digest" },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "decision": { "enum": ["approved", "denied"] },
+        "requested_at": { "$ref": "#/$defs/Timestamp" },
+        "decided_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "Lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_key", "project_id", "task_id", "holder", "fence", "issued_at", "expires_at"],
+      "properties": {
+        "resource_key": { "$ref": "#/$defs/Scope" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "holder": { "$ref": "#/$defs/NonEmptyString" },
+        "fence": { "type": "integer", "minimum": 1 },
+        "issued_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" },
+        "released_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "TaskAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_id", "task_id", "run_id", "attempt_number", "worker_id", "state", "started_at"],
+      "properties": {
+        "attempt_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "attempt_number": { "type": "integer", "minimum": 1 },
+        "worker_id": { "$ref": "#/$defs/NonEmptyString" },
+        "state": { "enum": ["leased", "running", "succeeded", "failed", "abandoned"] },
+        "started_at": { "$ref": "#/$defs/Timestamp" },
+        "ended_at": { "type": ["string", "null"], "format": "date-time" },
+        "failure_id": { "type": ["string", "null"] }
+      }
+    },
+    "OutboxEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effect_id", "project_id", "run_id", "task_id", "step_id", "adapter", "idempotency_key", "request_digest", "status", "created_at"],
+      "properties": {
+        "effect_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "step_id": { "$ref": "#/$defs/NonEmptyString" },
+        "adapter": { "$ref": "#/$defs/NonEmptyString" },
+        "idempotency_key": { "$ref": "#/$defs/NonEmptyString" },
+        "request_digest": { "$ref": "#/$defs/Digest" },
+        "status": { "enum": ["authorization_pending", "ready", "succeeded", "failed", "unknown"] },
+        "created_at": { "$ref": "#/$defs/Timestamp" },
+        "dispatched_at": { "type": ["string", "null"], "format": "date-time" },
+        "reconciled_at": { "type": ["string", "null"], "format": "date-time" },
+        "last_error": { "type": ["string", "null"] }
+      }
+    },
+    "EffectReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "effect_id", "status", "result", "result_digest", "recorded_at"],
+      "properties": {
+        "receipt_id": { "$ref": "#/$defs/NonEmptyString" },
+        "effect_id": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "enum": ["succeeded", "failed", "unknown"] },
+        "provider_receipt": { "type": ["string", "null"] },
+        "result": { "type": "object" },
+        "result_digest": { "$ref": "#/$defs/Digest" },
+        "recorded_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "NegativeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failure_id", "project_id", "run_id", "task_id", "fingerprint", "failure_class", "severity", "evidence_refs", "repair_route", "first_seen", "last_seen", "recurrence_count"],
+      "properties": {
+        "failure_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "fingerprint": { "$ref": "#/$defs/Digest" },
+        "failure_class": { "$ref": "#/$defs/NonEmptyString" },
+        "severity": { "$ref": "#/$defs/NonEmptyString" },
+        "evidence_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "repair_route": { "$ref": "#/$defs/NonEmptyString" },
+        "first_seen": { "$ref": "#/$defs/Timestamp" },
+        "last_seen": { "$ref": "#/$defs/Timestamp" },
+        "recurrence_count": { "type": "integer", "minimum": 1 },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "ImprovementProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal_id", "project_id", "source_run_id", "hypothesis", "candidate_digest", "editable_surface", "expected_benefit", "risk", "rollback_route", "state", "created_at", "updated_at"],
+      "properties": {
+        "proposal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "source_run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "hypothesis": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_digest": { "$ref": "#/$defs/Digest" },
+        "editable_surface": { "$ref": "#/$defs/NonEmptyString" },
+        "expected_benefit": { "$ref": "#/$defs/NonEmptyString" },
+        "risk": { "$ref": "#/$defs/NonEmptyString" },
+        "rollback_route": { "$ref": "#/$defs/NonEmptyString" },
+        "held_in_eval_id": { "type": ["string", "null"] },
+        "held_out_eval_id": { "type": ["string", "null"] },
+        "sealed_eval_id": { "type": ["string", "null"] },
+        "state": { "enum": ["candidate", "heldout_pending", "owner_review", "limited", "active", "rejected", "retired"] },
+        "owner_approval_id": { "type": ["string", "null"] },
+        "created_at": { "$ref": "#/$defs/Timestamp" },
+        "updated_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ActiveRulePromotionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotion_record_id",
+        "candidate_id",
+        "candidate_digest",
+        "policy_version",
+        "promotion_validation_eval_id",
+        "promotion_validation_dataset_digest",
+        "promotion_validation_attestation_digest",
+        "promotion_validation_query_count",
+        "promotion_validation_status",
+        "limited_promotion_record_id",
+        "from_state",
+        "target_state",
+        "proposal_maker_principal_id",
+        "evaluator_principal_id",
+        "evaluator_digest",
+        "sealed_eval_id",
+        "sealed_dataset_digest",
+        "sealed_dataset_use_count",
+        "sealed_result_influenced_edits",
+        "sealed_attestation_digest",
+        "safety_hard_failures",
+        "eval_status",
+        "evaluated_at",
+        "owner_approval_id",
+        "owner_principal_id",
+        "approved_at",
+        "scope",
+        "review_date",
+        "non_goals",
+        "rollback_or_retirement_path",
+        "non_claim_boundary"
+      ],
+      "properties": {
+        "promotion_record_id": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_id": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_digest": { "$ref": "#/$defs/Digest" },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "promotion_validation_eval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "promotion_validation_dataset_digest": { "$ref": "#/$defs/Digest" },
+        "promotion_validation_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "promotion_validation_query_count": { "type": "integer", "minimum": 1 },
+        "promotion_validation_status": { "const": "pass" },
+        "limited_promotion_record_id": { "$ref": "#/$defs/NonEmptyString" },
+        "from_state": { "const": "limited" },
+        "target_state": { "const": "active" },
+        "proposal_maker_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "evaluator_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "evaluator_digest": { "$ref": "#/$defs/Digest" },
+        "sealed_eval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "sealed_dataset_digest": { "$ref": "#/$defs/Digest" },
+        "sealed_dataset_use_count": { "const": 1 },
+        "sealed_result_influenced_edits": { "const": false },
+        "sealed_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "safety_hard_failures": { "const": 0 },
+        "eval_status": { "const": "pass" },
+        "evaluated_at": { "$ref": "#/$defs/Timestamp" },
+        "owner_approval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "owner_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "approved_at": { "$ref": "#/$defs/Timestamp" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "review_date": { "$ref": "#/$defs/Timestamp" },
+        "non_goals": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "rollback_or_retirement_path": { "$ref": "#/$defs/NonEmptyString" },
+        "non_claim_boundary": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    }
+  }
+}

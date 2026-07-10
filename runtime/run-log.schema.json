@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/company-os/taskrun-log.schema.json",
-  "title": "Company OS Taskrun Log",
+  "$id": "https://example.com/company-os/run-log.schema.json",
+  "title": "Company OS Run Log",
   "type": "object",
   "required": [
-    "taskrun_id",
+    "run_id",
     "started_at",
     "runtime_kit_version",
     "project",
@@ -15,7 +15,7 @@
     "non_claims"
   ],
   "properties": {
-    "taskrun_id": { "type": "string" },
+    "run_id": { "type": "string" },
     "started_at": { "type": "string" },
     "ended_at": { "type": "string" },
     "runtime_kit_version": { "type": "string" },
@@ -23,6 +23,10 @@
     "task_summary": { "type": "string" },
     "task_class": { "type": "string" },
     "startup_packet_ref": { "type": "string" },
+    "goal_contract_ref": { "type": "string" },
+    "task_packet_ref": { "type": "string" },
+    "evidence_packet_ref": { "type": "string" },
+    "runtime_surface_vector_ref": { "type": "string" },
     "project_adoption_ref": { "type": "string" },
     "context_pack": {
       "type": "array",
@@ -53,7 +57,8 @@
         "provider_smoke",
         "human_acceptance",
         "business_validation",
-        "durable_rule_promotion",
+        "durable_memory_promotion",
+        "active_rule_promotion",
         "not_verified"
       ]
     },
@@ -74,6 +79,41 @@
       "items": { "type": "string" }
     },
     "feedback_candidate": { "type": "boolean" },
-    "feedback_route": { "type": "string" }
+    "feedback_route": { "type": "string" },
+    "integration_queue_state": {
+      "type": "string",
+      "enum": [
+        "none",
+        "review_pending",
+        "evaluator_pending",
+        "push_pr_pending",
+        "ci_pending",
+        "ci_failed",
+        "merge_pending",
+        "deploy_pending",
+        "deploy_dir_updated",
+        "service_restart_required",
+        "runtime_check_pending",
+        "runtime_stale",
+        "delete_pending",
+        "retire_pending",
+        "defer_with_owner",
+        "superseded",
+        "delivered"
+      ]
+    },
+    "improvement_route": {
+      "type": "string",
+      "enum": [
+        "no_feedback_needed",
+        "project_record_only",
+        "improvement_candidate",
+        "limited_trial",
+        "delete_rule",
+        "rewrite_rule",
+        "merge_rule",
+        "human_review_required"
+      ]
+    }
   }
 }

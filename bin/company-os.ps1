@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("validate", "new-taskrun", "new-feedback", "new-projection")]
+    [ValidateSet("validate", "new-run", "new-feedback", "new-projection", "runtime-init", "runtime-demo", "runtime-status", "runtime-verify")]
     [string]$Command = "validate",
 
     [string]$Project = "unknown",
@@ -62,15 +62,26 @@ param(
         "provider_smoke",
         "human_acceptance",
         "business_validation",
-        "durable_rule_promotion",
+        "durable_memory_promotion",
+        "active_rule_promotion",
         "not_verified"
     )]
     [string]$EvidenceState = "not_verified",
-    [string]$CompanyHome = "$HOME\.company-os"
+    [string]$CompanyHome = "$HOME\.company-os",
+    [string]$Database = "$HOME\.company-os\state\runtime.db",
+    [string]$StateDir = "$HOME\.company-os\demos\crash-recovery",
+    [ValidateSet("before_effect", "after_effect_before_checkpoint", "after_checkpoint", "none")]
+    [string]$FaultAt = "after_effect_before_checkpoint"
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+if ($env:PYTHONPATH) {
+    $env:PYTHONPATH = "$RepoRoot$([IO.Path]::PathSeparator)$env:PYTHONPATH"
+}
+else {
+    $env:PYTHONPATH = "$RepoRoot"
+}
 
 function Test-JsonFile {
     param([string]$Path)
@@ -136,6 +147,10 @@ function Test-ProjectionDecisionRecord {
 }
 
 function Invoke-Validate {
+    & python -m companyos_runtime validate --repo $RepoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Canonical Python runtime validation failed with exit code $LASTEXITCODE."
+    }
     $required = @(
         "README.md",
         "AGENTS.md",
@@ -146,11 +161,15 @@ function Invoke-Validate {
         "full-stack\frontend-boundary.md",
         "full-stack\release-checklist.md",
         "gfr\startup-contract.md",
-        "runtime\taskrun-log.schema.json",
+        "runtime\run-log.schema.json",
         "runtime\feedback-export.schema.json",
         "runtime\project-adoption.schema.json",
         "runtime\projection-decision.schema.json",
-        "templates\TASK_STARTUP_PACKET.md",
+        "templates\AOS_STARTUP_PACKET.md",
+        "templates\GOAL_CONTRACT.md",
+        "templates\TASK_PACKET.md",
+        "templates\EVIDENCE_PACKET.md",
+        "templates\RUNTIME_SURFACE_VECTOR.md",
         "templates\FEEDBACK_PACKET.md",
         "templates\PROJECT_COMPANYOS_ADOPTION.md",
         "templates\PROJECTION_DECISION.md",
@@ -186,9 +205,9 @@ function Invoke-Validate {
     Write-Host "CompanyOS validation passed."
 }
 
-function New-Taskrun {
+function New-Run {
     if ([string]::IsNullOrWhiteSpace($Summary)) {
-        throw "Summary is required for new-taskrun."
+        throw "Summary is required for new-run."
     }
 
     $runsDir = Join-Path $CompanyHome "runs"
@@ -201,7 +220,7 @@ function New-Taskrun {
     }
 
     $record = [ordered]@{
-        taskrun_id = "$timestamp-$safeProject"
+        run_id = "$timestamp-$safeProject"
         started_at = (Get-Date).ToString("o")
         runtime_kit_version = (Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "VERSION")).Trim()
         project = $Project
@@ -225,13 +244,35 @@ function New-Taskrun {
         non_claims = @(
             "This log is local operational evidence, not human acceptance or business validation."
         )
+        integration_queue_state = "none"
+        improvement_route = "no_feedback_needed"
         feedback_candidate = $false
         feedback_route = "not decided"
     }
 
-    $outFile = Join-Path $runsDir "$timestamp-$safeProject.taskrun.json"
+    $outFile = Join-Path $runsDir "$timestamp-$safeProject.run.json"
     $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $outFile -Encoding UTF8
-    Write-Host "Wrote taskrun log: $outFile"
+    Write-Host "Wrote run log: $outFile"
+}
+
+function Invoke-RuntimeDemo {
+    & python -m companyos_runtime demo --state-dir $StateDir --fault-at $FaultAt
+    if ($LASTEXITCODE -ne 0) { throw "Runtime demo failed with exit code $LASTEXITCODE." }
+}
+
+function Invoke-RuntimeInit {
+    & python -m companyos_runtime --db $Database init
+    if ($LASTEXITCODE -ne 0) { throw "Runtime initialization failed with exit code $LASTEXITCODE." }
+}
+
+function Invoke-RuntimeStatus {
+    & python -m companyos_runtime --db $Database status
+    if ($LASTEXITCODE -ne 0) { throw "Runtime status failed with exit code $LASTEXITCODE." }
+}
+
+function Invoke-RuntimeVerify {
+    & python -m companyos_runtime --db $Database verify
+    if ($LASTEXITCODE -ne 0) { throw "Runtime verification failed with exit code $LASTEXITCODE." }
 }
 
 function New-Feedback {
@@ -311,7 +352,7 @@ function New-Projection {
         misleading_identity_risk = "requires_review"
         release_boundary = @(
             "CompanyOS is a runtime kit, not the full private COS source.",
-            "This projection decision does not prove human acceptance, business validation, or durable rule promotion."
+            "This projection decision does not prove human acceptance, business validation, durable memory promotion, or active-rule promotion."
         )
         decision = $Decision
         validation = @(
@@ -333,7 +374,11 @@ function New-Projection {
 
 switch ($Command) {
     "validate" { Invoke-Validate }
-    "new-taskrun" { New-Taskrun }
+    "new-run" { New-Run }
     "new-feedback" { New-Feedback }
     "new-projection" { New-Projection }
+    "runtime-init" { Invoke-RuntimeInit }
+    "runtime-demo" { Invoke-RuntimeDemo }
+    "runtime-status" { Invoke-RuntimeStatus }
+    "runtime-verify" { Invoke-RuntimeVerify }
 }

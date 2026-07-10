@@ -1,200 +1,185 @@
 # CompanyOS
 
-CompanyOS is the public-safe runtime projection of a private AI-native Company
-OS.
+CompanyOS is a public-safe, single-host operating runtime for AI-native
+software work. It combines human-readable Goal Contracts and Task Packets with
+a code-enforced Runtime Kernel: durable events, explicit state machines,
+task-scoped capability grants, leases and fencing, a transactional outbox,
+typed evidence, runtime freshness, integration/evaluation queues, scoped
+context and memory, and guarded self-improvement proposals.
 
-It gives a developer machine a repeatable operating surface for:
+It is not the private COS source vault, a generic skill library, a
+project-specific submodule, a distributed workflow engine, or proof of
+provider/human/business acceptance. GFR is the authoring-to-runtime compiler
+boundary inside CompanyOS. Codex is one adapter, not the repository identity.
 
-- task startup and context selection;
-- full-stack engineering boundaries;
-- evidence-state discipline;
-- provider and tool gate boundaries;
-- local taskrun logging;
-- sanitized feedback export;
-- adapter-specific agent instructions.
+## What Is Executable
 
-It is not the full private Company OS source vault. It is not a skill library.
-GFR is the startup compiler inside CompanyOS. Codex support is one adapter, not
-the repository identity.
-
-## Repository Identity
-
-Use:
-
-```text
-CompanyOS
-Company OS Runtime Kit
+```mermaid
+flowchart LR
+    A["Goal Contract / Task Packet"] --> B["Goal Compiler"]
+    B --> C["Strict GoalSpec / TaskSpec"]
+    C --> D["Runtime Kernel"]
+    D --> E["Event ledger + projections"]
+    D --> F["Lease + exact capability grant"]
+    F --> G["Outbox + idempotent adapter"]
+    G --> H["Evidence + evaluator + integration + freshness"]
+    H --> I["Authoritative delivery guard"]
 ```
 
-Do not position this repository as a generic skill collection, an AFS submodule,
-or a dump of private strategy material.
+The kernel is implemented in `companyos_runtime/`. The canonical wire
+contracts are in `runtime/contracts/v1/runtime-contracts.schema.json`. The
+architecture and operational limits are documented in:
 
-## Clone Location
+- `docs/runtime-architecture.md`
+- `docs/operations-runbook.md`
 
-Git places the repository wherever the user runs `git clone`.
+## Quick Start
 
-Examples:
+Python 3.11 or newer is required.
 
 ```powershell
-cd D:\Projects
-git clone https://github.com/es-dra/CompanyOS.git
+python -m pip install -e .
+python -m companyos_runtime --db "$HOME/.company-os/state/runtime.db" init
+python -m companyos_runtime validate --repo .
 ```
 
-This creates:
-
-```text
-D:\Projects\CompanyOS
-```
-
-Codex desktop workspaces can also place the checkout under the workspace path
-chosen by the user. The repository itself does not force a clone location.
-
-## Install
-
-PowerShell:
+Run the complete zero-provider-cost crash/recovery slice:
 
 ```powershell
-.\install.ps1
+python -m companyos_runtime demo `
+  --state-dir "$HOME/.company-os/demos/crash-recovery" `
+  --fault-at after_effect_before_checkpoint
 ```
 
-Shell:
+The demo creates a Goal/Run/Task, acquires a fenced lease, records a
+maker-checker approval and exact zero-cost grant, performs one idempotent effect
+against a separate fake-provider ledger, crashes before checkpoint, reconciles
+the receipt, records independent runtime evidence and a fresh observation,
+closes Integration Queue, verifies replay, and routes an improvement candidate
+through held-in and isolated held-out evaluation. It stops at owner review.
 
-```bash
-./install.sh
-```
-
-Default local layout:
+Expected scoped claims:
 
 ```text
-~/.company-os/
-  CompanyOS/
-  runs/
-  feedback-outbox/
-  projects/
+run_state = delivered
+task_state = delivered
+external_effect_delta = 1
+evidence_state = runtime_verification
+improvement_state = owner_review
+provider_cost = 0
 ```
 
-## Task Flow
+It does not claim provider smoke, human acceptance, business/legal validation,
+public release, active-rule promotion, or multi-host exactly-once behavior.
+
+## Runtime Invariants
+
+- Goal/Task authority is strict and segment-safe; TaskSpec must be a subset of
+  GoalSpec.
+- Run transitions are event driven; direct LoopState mutation is rejected.
+- Delivery guards are computed from persisted evidence, evaluator,
+  Integration Queue, and fresh observations. Caller booleans are not authority.
+- Approvals require different maker/checker principals. Grants bind principal,
+  task, capability, action, resource, request digest, expiry, use count, budget,
+  and optional fencing token. Approval, issue, and consume also recheck that the
+  exact resource remains inside the persisted TaskSpec scope and outside every
+  forbidden scope. Each capability has a closed action vocabulary, and
+  approval/grant/consume obey capability-specific execution phases.
+- Scheduler order is explicit: claim while the Run is ready, prove the exact
+  lease holder/fence through the Run `task_started` event, then start the Task.
+  Worker consumption also requires a current `task://<task_id>` claim; stale
+  or terminal work cannot create a new external effect. Enqueue preflights the
+  live holder and exact grant before reserving a declared workflow step.
+- Event payloads are digest-verified and globally hash chained. Core
+  Goal/Run/Task events also require a live authenticated session,
+  event-specific role, and per-store opaque command capability bound to the
+  exact RuntimeKernel or TaskScheduler instance; caller handler metadata is
+  rejected. Projections can be replayed and checked.
+- Synthetic evidence cannot be upgraded to provider, human, business, memory,
+  or active-rule evidence.
+- Context records selection and rejection. Memory promotion preserves evidence
+  provenance, TTL, promotion-validation, and exact human approval.
+- Active rule promotion is separate from durable memory promotion and is never
+  automatic; active promotion also requires a sealed evaluation that was not
+  used to select the candidate. Canonical readback verifies the full
+  `ActiveRulePromotionRecord` and its proposal/eval/attestation/limited/approval
+  event lineage in one transaction snapshot.
+
+## Authoring and Compilation
+
+Use these public-safe authoring templates:
 
 ```text
-task request
-  -> authority order
-  -> GFR startup contract
-  -> minimal context pack
-  -> execution
-  -> verification and evidence boundary
-  -> local taskrun log
-  -> sanitized feedback export
+templates/AOS_STARTUP_PACKET.md
+templates/GOAL_CONTRACT.md
+templates/TASK_PACKET.md
+templates/EVIDENCE_PACKET.md
+templates/RUNTIME_SURFACE_VECTOR.md
 ```
 
-## Contents
+Compile JSON authoring packets before execution:
 
-```text
-core/                 authority order and evidence-state rules
-full-stack/           professional software engineering standards
-gfr/                  task startup compiler contract
-runtime/              taskrun, project adoption, projection decision, and feedback export schemas
-templates/            startup, adoption, projection, and feedback templates
-adapters/codex/       Codex-facing project instruction adapter
-bin/                  lightweight local commands
-privacy/              redaction and exclusion policy
-examples/             safe example project registration
-docs/                 source sync and contributor onboarding guides
+```powershell
+python -m companyos_runtime compile-goal --input goal-authoring.json
+python -m companyos_runtime compile-task `
+  --input task-authoring.json --goal-spec compiled-goal.json
 ```
 
-## Local Commands
+Narrative fields such as worker preference, worktree choice, and handoff notes
+remain contextual. Only the compiled spec is executable authority.
+Each executable workflow step binds `step_id`, adapter, action, resource, and
+the SHA-256 digest of the exact request; enqueue and dispatch both revalidate
+that persisted declaration.
 
-Validate the runtime kit files:
+## Local CLI
+
+```powershell
+# Redacted counts and one run projection
+python -m companyos_runtime --db .state/runtime.db status --run-id run-1
+
+# Hash chain plus deterministic core replay
+python -m companyos_runtime --db .state/runtime.db verify
+
+```
+
+Mutating runtime commands, outbox recovery, and projection repair are not
+exposed as unauthenticated CLI surfaces in v0.2. An embedding application must
+authenticate an opaque session and invoke the relevant Python service inside
+the trusted kernel process.
+
+The PowerShell compatibility adapter retains the old draft/log commands and
+routes runtime validation to the Python kernel:
 
 ```powershell
 .\bin\company-os.ps1 validate
+.\bin\company-os.ps1 runtime-demo -StateDir "$HOME/.company-os/demos/demo-1"
+.\bin\company-os.ps1 runtime-status
+.\bin\company-os.ps1 runtime-verify
 ```
 
-Read the full-stack standard:
+## Repository Layout
 
 ```text
-full-stack/engineering-standard.md
+companyos_runtime/    executable kernel and CLI
+runtime/contracts/    canonical public wire contracts
+core/                 authority and evidence doctrine
+gfr/                  startup/compiler contract
+full-stack/           engineering and release standards
+templates/            human authoring packets
+adapters/              runtime-specific guidance; Codex is one adapter
+docs/                  architecture, operations, source sync, onboarding
+tests/                 contract, concurrency, chaos, policy, evidence and eval tests
 ```
 
-Create a local taskrun log:
+## Install Boundary
 
-```powershell
-.\bin\company-os.ps1 new-taskrun -Project Example -TaskClass "runtime smoke" -Summary "local verification" -EvidenceState structure_verification
-```
+`install.ps1` and `install.sh` install only into a managed, marked directory.
+They refuse recursive replacement of an unmarked path. Runtime state lives
+outside the installed kit under `~/.company-os/state`; reinstalling code does
+not authorize or erase unrelated project state.
 
-By default, logs are written to:
-
-```text
-~/.company-os/runs/
-```
-
-Feedback packet drafts should be written to:
-
-```text
-~/.company-os/feedback-outbox/
-```
-
-Create a local feedback export draft:
-
-```powershell
-.\bin\company-os.ps1 new-feedback -Summary "project startup packet needs clearer read scope" -Kind workflow_gap -RecommendedRoute owner_review
-```
-
-Feedback drafts default to `requires_review`; maintainers decide whether they
-become project notes, candidate rules, tooling issues, or discarded signals.
-
-Create a local projection decision draft before source-to-runtime projection:
-
-```powershell
-.\bin\company-os.ps1 new-projection -SourceObject "Project adoption template" -SourceStatus template -SourceLayer distribution_projection -ProjectionTarget "templates/PROJECT_COMPANYOS_ADOPTION.md" -ProjectedAs template -CandidatePublicBoundary not_candidate -PublicSafe -RedactionStatus redacted -Decision project
-```
-
-Projection drafts are written to:
-
-```text
-~/.company-os/projection-decisions/
-```
-
-Candidate source material must stay bounded as template-only, feedback-shape,
-schema-under-review, sanitized-example, or blocked. It must not be projected as
-an active CompanyOS rule.
-
-## Source Sync And Onboarding
-
-For the repository/source boundary, read:
-
-```text
-docs/source-sync.md
-```
-
-For adding new contributors or agent users, read:
-
-```text
-docs/contributor-onboarding.md
-templates/PROJECT_COMPANYOS_ADOPTION.md
-templates/PROJECTION_DECISION.md
-```
-
-## Codex Integration Boundary
-
-When Codex opens this repository, root `AGENTS.md` provides the local operating
-rules for working on CompanyOS itself.
-
-For another project to use CompanyOS, that project must explicitly reference
-the installed runtime kit or include the Codex adapter guidance from:
-
-```text
-adapters/codex/AGENTS.md
-```
-
-Cloning this repository alone cannot automatically change every Codex project
-on a machine. The intended v0.1 behavior is installable local runtime plus
-explicit project opt-in.
-
-## Publication Gates
-
-Before publishing a public GitHub repository:
-
-- confirm no private COS source, secrets, customer material, real costs, signed
-  URLs, raw provider responses, or generated media bytes are present;
-- create the repository from this clean export, not from private source-history;
-- tag the first usable release instead of asking users to auto-pull `main`.
+Cloning or installing CompanyOS cannot alter every project on a machine. Each
+project must opt in and compile its own Goal/Task authority. Remote repository
+mutation, server writes, provider cost, destructive cleanup, public release,
+human acceptance, legal/business decisions, and active-rule promotion always
+remain separately gated.
