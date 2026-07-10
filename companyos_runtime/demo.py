@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from .errors import AuthorizationError, SimulatedCrash
+from .errors import AuthorizationError, SimulatedCrash, TransitionError
 from .evaluation import EvalResultAttestation, EvaluationRegistry
 from .evidence import EvidenceRegistry
 from .fake_provider import FakeProvider
@@ -51,6 +51,10 @@ class _DemoEvalVerifier:
 
     def __init__(self) -> None:
         self._key = secrets.token_bytes(32)
+        self.authority_id = (
+            "companyos.demo.eval-verifier.ephemeral-hmac."
+            f"{content_hash(self._key.hex())}"
+        )
 
     @staticmethod
     def _payload(attestation: EvalResultAttestation) -> dict[str, Any]:
@@ -540,6 +544,31 @@ def run_zero_cost_demo(
     proposal = evaluations.attach_eval(
         proposal.proposal_id, held_out.eval_id, actor=owner
     )
+    try:
+        evaluations.build_limited_promotion_request(
+            proposal.proposal_id,
+            source_task_id=task_id,
+            verification_evidence_id=claim.evidence_id,
+            scope=f"project://{project_id}/workflow_parameter/demo-only",
+            actual_outcome_kind="failure_prevented",
+            actual_outcome=claim.claim,
+            non_goals=(
+                "real project trial",
+                "active rule promotion",
+                "external sealed custody",
+            ),
+            review_condition="replace synthetic evidence with a real delivered task",
+            rollback_or_retirement_path=proposal.rollback_route,
+            non_claim_boundary=(
+                "synthetic zero-cost demo evidence cannot support limited promotion"
+            ),
+        )
+    except TransitionError:
+        limited_gate_status = "blocked_synthetic_evidence"
+    else:  # pragma: no cover - a regression must fail the demo loudly
+        raise RuntimeError(
+            "synthetic demo evidence unexpectedly satisfied the real-task limited gate"
+        )
     kernel.advance_loop(
         run_id=run_id,
         event=LoopEvent.IMPROVEMENT_REQUESTED,
@@ -575,6 +604,7 @@ def run_zero_cost_demo(
         "evidence_state": "runtime_verification",
         "evidence_id": claim.evidence_id,
         "improvement_state": proposal.state.value,
+        "limited_gate_status": limited_gate_status,
         "provider_cost": float(cost),
         "non_claims": [
             "provider_smoke",

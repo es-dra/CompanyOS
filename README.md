@@ -94,16 +94,40 @@ public release, active-rule promotion, or multi-host exactly-once behavior.
   Goal/Run/Task events also require a live authenticated session,
   event-specific role, and per-store opaque command capability bound to the
   exact RuntimeKernel or TaskScheduler instance; caller handler metadata is
-  rejected. Projections can be replayed and checked.
+  rejected. Approval, artifact/evidence, evaluation/improvement, and sealed
+  custody authority events likewise require an opaque capability bound to the
+  exact trusted service instance and its configuration digest. All store
+  objects for the same resolved database path share one process-local authority
+  domain; only one live EvaluationRegistry may hold its verifier authority, and
+  verifier implementation types/configuration stay pinned. Projections can be
+  replayed and checked. Schema v4 also rejects direct event-table inserts unless
+  the exact event ID/hash was armed by `SQLiteStore.append_event` on that
+  managed connection.
 - Synthetic evidence cannot be upgraded to provider, human, business, memory,
   or active-rule evidence.
 - Context records selection and rejection. Memory promotion preserves evidence
   provenance, TTL, promotion-validation, and exact human approval.
+- Candidate-to-limited rule promotion requires a canonical
+  `LimitedRulePromotionRecord`: the source Run and Task are both durably
+  delivered, the exact structure/runtime claim has a `pass` or
+  `pass_with_residual_risk` verdict and a typed `accepted_evidence_id` Task
+  event, the documented actual outcome equals that claim, and bounded scope,
+  risk, non-goals, review condition, and rollback are all included in the
+  Owner approval digest. A single typed provenance classifier canonicalizes
+  case, Unicode, whitespace/underscore aliases, and nested percent encoding;
+  non-real or unknown environment, artifact kind, or URI scheme is rejected by
+  this gate.
 - Active rule promotion is separate from durable memory promotion and is never
   automatic; active promotion also requires a sealed evaluation that was not
-  used to select the candidate. Canonical readback verifies the full
-  `ActiveRulePromotionRecord` and its proposal/eval/attestation/limited/approval
-  event lineage in one transaction snapshot.
+  used to select the candidate plus a separately verified external-custody
+  attestation. The custody verifier defaults to deny. Canonical readback
+  verifies the exact limited record, custody provider/custodian/digest, and the
+  full proposal/eval/approval event lineage in one transaction snapshot.
+
+Opaque capabilities are an in-process boundary, not a claim against hostile
+reflection/monkey-patching or a compromised host/SQLite administrator. Those
+actors remain in the trusted computing base and require OS, process, key, and
+external attestation controls outside this runtime.
 
 ## Authoring and Compilation
 

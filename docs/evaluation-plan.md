@@ -110,10 +110,30 @@ Track:
 - Candidate code/prompts cannot read validation or sealed examples/answers.
 - Evaluator version and dataset digest are immutable inputs to the eval record.
 - Any safety failure rejects the candidate even when aggregate metrics pass.
-- Promotion approval binds proposal, candidate digest, target state, and must
-  occur after the applicable evaluation.
+- Candidate-to-limited approval binds the proposal/candidate/policy, exact
+  delivered source Run/Task, accepted verification-evidence ID and digest,
+  bounded project scope, actual outcome, risk, non-goals, review condition, and
+  rollback. A free-text Task reason is not evidence authority; only the typed
+  `accepted_evidence_id` event field counts.
+- `pass_with_residual_risk` may support limited only when that risk and the
+  bounded scope/non-goals/review condition remain in the canonical request.
+  `not_required`, failed, unaccepted, cross-task, cross-run, cross-project, and
+  non-real or unknown evidence origins are rejected. Test public API inputs and
+  rehashed projection/event pairs for case, Unicode, whitespace/underscore,
+  percent-encoded aliases, fake/test-double environments, synthetic/mock kinds,
+  mock schemes, and unknown labels.
 - Limited and active promotion require separate decisions. Active promotion
-  additionally requires a clean sealed evaluation.
+  additionally requires a clean sealed evaluation and an independent
+  verifier-accepted external-custody record. No configured custody verifier
+  means deny.
+- Raw `append_event` calls cannot mint approval, artifact/evidence,
+  evaluation/improvement, or custody authority. Test missing capability,
+  capability borrowing by another registry instance, cross-store reuse,
+  same-database-path registry duplication, self-declared verifier identity
+  spoofing, verifier replacement, default-deny verifier configuration,
+  projection-only custody injection, and exact public-service positive paths.
+  Host/process compromise remains a TCB non-claim rather than a passed test
+  claim.
 - If a sealed result causes a new edit, mark that set burned; it is now
   validation and a fresh sealed set is required.
 
@@ -142,7 +162,8 @@ demonstrate:
 | Target user/owner acceptance record | human acceptance for the reviewed result |
 | Customer/market/ROI evidence | business validation for that hypothesis |
 | Provenance + held-out + exact memory approval | durable memory promotion |
-| Promotion-validation + clean sealed test + exact separate rule approval | active-rule promotion |
+| Real delivered Run/Task + accepted passing verification claim + exact bounded Owner decision | limited rule inside that scope only |
+| Exact limited record + clean sealed test + verified external custody + exact separate rule approval | active-rule promotion structure only |
 
 Every report must include non-claims and the exact environment/dataset/adapter
 identity.

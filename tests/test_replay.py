@@ -18,6 +18,7 @@ from companyos_runtime.types import (
     LoopEvent,
     LoopState,
     TaskSpec,
+    TaskState,
 )
 
 from tests.identity_fixtures import IdentityFixture
@@ -128,6 +129,28 @@ class ProjectionReplayTests(unittest.TestCase):
         self.assertEqual(first.runs["run-1"]["loop_state"], "ready")
         self.assertEqual(first.tasks["task-1"]["state"], "ready")
         self.assertEqual(self.store.verify_event_chain(), 5)
+
+    def test_replay_rejects_malformed_structured_evidence_linkage(self) -> None:
+        tasks = {
+            "task-1": {
+                "state": TaskState.EVIDENCE_PENDING.value,
+                "aggregate_version": 3,
+            }
+        }
+        row = {
+            "aggregate_id": "task-1",
+            "aggregate_version": 4,
+            "event_type": "task_state_changed",
+            "recorded_at": "2026-07-10T00:00:00Z",
+        }
+        payload = {
+            "from": TaskState.EVIDENCE_PENDING.value,
+            "target": TaskState.INTEGRATION_PENDING.value,
+            "reason": "free text is not evidence authority",
+            "accepted_evidence_id": "",
+        }
+        with self.assertRaisesRegex(IntegrityError, "accepted-evidence linkage"):
+            self.replayer._apply_task(tasks, {}, {}, row, payload)
 
     def test_verify_detects_projection_tamper_and_repair_is_idempotent(self) -> None:
         event_count = self.store.verify_event_chain()

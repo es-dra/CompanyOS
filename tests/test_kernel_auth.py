@@ -441,6 +441,13 @@ class RuntimeKernelAuthenticationTests(unittest.TestCase):
             evidence_id="evidence-good",
         )
         self.assertEqual(accepted["state"], TaskState.INTEGRATION_PENDING.value)
+        event = self.store.query(
+            "SELECT payload_json FROM events WHERE event_id = ?",
+            (accepted["event_id"],),
+        )[0]
+        payload = json.loads(event["payload_json"])
+        self.assertEqual(payload["accepted_evidence_id"], "evidence-good")
+        self.assertEqual(payload["target"], TaskState.INTEGRATION_PENDING.value)
 
     def test_required_evaluator_cannot_borrow_pass_for_supplied_not_required(
         self,

@@ -607,10 +607,23 @@ class RuntimeKernel:
         reason: str,
         idempotency_key: str,
         auth_session: VerifiedPrincipal,
+        event_fields: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         current = TaskState(row["state"])
         require_transition(current, target)
         version = int(row["aggregate_version"])
+        event_payload: dict[str, Any] = {
+            "from": current.value,
+            "target": target.value,
+            "reason": reason,
+        }
+        if event_fields:
+            reserved = set(event_payload).intersection(event_fields)
+            if reserved:
+                raise ContractError(
+                    f"task transition event fields collide with core fields: {sorted(reserved)}"
+                )
+            event_payload.update(event_fields)
         appended = self.store.append_event(
             connection,
             aggregate_type="task",
@@ -625,7 +638,7 @@ class RuntimeKernel:
             command_id=self._command_id(),
             correlation_id=row["run_id"] or row["goal_id"],
             policy_version=self.policy_version,
-            payload={"from": current.value, "target": target.value, "reason": reason},
+            payload=event_payload,
             command_authority=self.__command_authority,
             idempotency_key=idempotency_key,
         )
@@ -718,6 +731,7 @@ class RuntimeKernel:
                 reason=f"authoritative evidence accepted: {evidence_id}",
                 idempotency_key=idempotency_key,
                 auth_session=actor,
+                event_fields={"accepted_evidence_id": evidence_id},
             )
             self.store.save_idempotent_result(
                 connection,

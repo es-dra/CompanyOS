@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ContractError
-from .evaluation import ActiveRulePromotionRecord
+from .evaluation import (
+    ActiveRulePromotionRecord,
+    LimitedRulePromotionRecord,
+    LimitedRulePromotionRequest,
+)
 from .leases import LeaseRecord
 from .types import (
     Capability,
@@ -17,6 +21,7 @@ from .types import (
     IntegrationState,
     RuntimeSurfaceSpec,
     TaskSpec,
+    content_hash,
 )
 from .workflow import EffectReceipt, OutboxEffect
 
@@ -162,6 +167,9 @@ def _validate_contract_parity(
         "EffectReceipt",
         "NegativeResult",
         "ImprovementProposal",
+        "LimitedRulePromotionRequest",
+        "LimitedRulePromotionRecord",
+        "SealedCustodyRecord",
         "ActiveRulePromotionRecord",
     }
     if "RuntimeSurfaceSpec" not in definitions:
@@ -243,6 +251,21 @@ def _validate_contract_parity(
         set(promotion_definition["required"]),
         _dataclass_required_fields(ActiveRulePromotionRecord),
     )
+    for schema_name, promotion_contract_type in (
+        ("LimitedRulePromotionRequest", LimitedRulePromotionRequest),
+        ("LimitedRulePromotionRecord", LimitedRulePromotionRecord),
+    ):
+        definition = definitions[schema_name]
+        _assert_exact_set(
+            f"{schema_name} property",
+            set(definition["properties"]),
+            {item.name for item in fields(promotion_contract_type)},
+        )
+        _assert_exact_set(
+            f"{schema_name} required-field",
+            set(definition["required"]),
+            _dataclass_required_fields(promotion_contract_type),
+        )
     for schema_name, wire_contract_type in (
         ("Lease", LeaseRecord),
         ("OutboxEffect", OutboxEffect),
@@ -353,6 +376,80 @@ def validate_repository(root: str | Path) -> dict[str, Any]:
 
     timestamp = "2026-01-01T00:00:00Z"
     digest = "0" * 64
+    limited_request = LimitedRulePromotionRequest(
+        candidate_id="validation-candidate",
+        candidate_digest=digest,
+        policy_version="companyos-policy-v1",
+        target_state="limited",
+        source_run_id="validation-run",
+        source_task_id="validation-task",
+        verification_evidence_id="validation-evidence",
+        verification_evidence_digest="6" * 64,
+        verification_evidence_state="structure_verification",
+        verification_evaluator_verdict="pass_with_residual_risk",
+        promotion_validation_eval_id="validation-held-out",
+        promotion_validation_dataset_digest="1" * 64,
+        promotion_validation_attestation_digest="2" * 64,
+        promotion_validation_query_count=1,
+        promotion_validation_status="pass",
+        scope="project://validation/prompt_candidate/bounded",
+        actual_outcome_kind="failure_prevented",
+        actual_outcome="the accepted claim documents one prevented failure",
+        risk="residual validation risk remains bounded to this project",
+        non_goals=("other projects", "business validation"),
+        review_condition="review after one additional real task",
+        rollback_or_retirement_path="retire validation candidate",
+        non_claim_boundary="structure verification only",
+    )
+    limited_record = LimitedRulePromotionRecord(
+        promotion_record_id="validation-limited-promotion",
+        request=limited_request,
+        from_state="owner_review",
+        owner_approval_id="validation-limited-approval",
+        owner_principal_id="validation-limited-owner",
+        approved_at="2026-01-01T00:00:30Z",
+    )
+    _validate_instance(
+        validator_type,
+        format_checker_type,
+        validation_error_type,
+        contract,
+        limited_request.to_dict(),
+        "canonical LimitedRulePromotionRequest",
+    )
+    _validate_instance(
+        validator_type,
+        format_checker_type,
+        validation_error_type,
+        contract,
+        limited_record.to_dict(),
+        "canonical LimitedRulePromotionRecord",
+    )
+    instances_validated += 2
+    custody_record = {
+        "attestation_id": "validation-custody",
+        "proposal_id": "validation-candidate",
+        "eval_id": "validation-sealed",
+        "project_id": "validation",
+        "candidate_digest": digest,
+        "dataset_digest": "4" * 64,
+        "eval_attestation_digest": "5" * 64,
+        "evaluator_principal_id": "validation-evaluator",
+        "custody_provider": "validation-external-provider",
+        "custodian_id": "validation-custodian",
+        "policy_version": "companyos-policy-v1",
+        "attestation_digest": "7" * 64,
+        "verified_at": "2026-01-01T00:00:45Z",
+    }
+    _validate_instance(
+        validator_type,
+        format_checker_type,
+        validation_error_type,
+        contract,
+        custody_record,
+        "canonical SealedCustodyRecord",
+    )
+    instances_validated += 1
     promotion_record = ActiveRulePromotionRecord(
         promotion_record_id="validation-active-promotion",
         candidate_id="validation-candidate",
@@ -364,6 +461,12 @@ def validate_repository(root: str | Path) -> dict[str, Any]:
         promotion_validation_query_count=1,
         promotion_validation_status="pass",
         limited_promotion_record_id="validation-limited-promotion",
+        limited_promotion_record_digest=content_hash(limited_record.to_dict()),
+        source_task_id="validation-task",
+        verification_evidence_id="validation-evidence",
+        verification_evidence_digest="6" * 64,
+        actual_outcome_kind="failure_prevented",
+        actual_outcome="the accepted claim documents one prevented failure",
         from_state="limited",
         target_state="active",
         proposal_maker_principal_id="validation-maker",
@@ -374,14 +477,19 @@ def validate_repository(root: str | Path) -> dict[str, Any]:
         sealed_dataset_use_count=1,
         sealed_result_influenced_edits=False,
         sealed_attestation_digest="5" * 64,
+        sealed_custody_attestation_id="validation-custody",
+        sealed_custody_provider="validation-external-provider",
+        sealed_custodian_id="validation-custodian",
+        sealed_custody_attestation_digest="7" * 64,
+        sealed_custody_verified_at="2026-01-01T00:00:45Z",
         safety_hard_failures=0,
         eval_status="pass",
         evaluated_at=timestamp,
         owner_approval_id="validation-owner-approval",
         owner_principal_id="validation-owner",
         approved_at="2026-01-01T00:01:00Z",
-        scope="prompt_candidate",
-        review_date="2026-01-01T01:01:00Z",
+        scope="project://validation/prompt_candidate/bounded",
+        review_condition="review after one additional real task",
         non_goals=("human_acceptance", "business_validation"),
         rollback_or_retirement_path="retire validation candidate",
         non_claim_boundary="structure verification only",

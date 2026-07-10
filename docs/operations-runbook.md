@@ -188,6 +188,7 @@ sync as multi-host coordination.
 | Condition | Required route |
 |---|---|
 | Event hash or payload digest mismatch | Stop writes; preserve evidence; owner decision |
+| Event insert is not armed by the store-managed connection | Reject it; investigate direct-driver or process-boundary misuse |
 | Session invalid, expired, or revoked | Re-authenticate; never substitute a display name or principal string |
 | Principal disabled or missing role | Owner reviews identity/role assignment; do not widen the operation |
 | Projection mismatch, valid event chain | Backup; replay/repair core projections |
@@ -197,6 +198,12 @@ sync as multi-host coordination.
 | Repeated failure fingerprint | Open circuit; retain negative result; select repair route |
 | Runtime observation stale/unhealthy | Mark runtime stale; probe/restart/redeploy as appropriate |
 | Held-out safety failure | Reject candidate; preserve eval result |
+| Limited request lacks delivered real Run/Task or typed accepted PASS evidence | Keep owner_review; collect real bounded-task evidence |
+| Limited source environment/kind/URI is non-real or unknown after canonical classification | Deny limited promotion; replace it with traceable allowlisted real-task evidence |
+| Protected event lacks exact service capability/config lineage | Stop promotion writes; preserve the database; investigate process/config drift |
+| Verifier lacks a key/configuration-scoped authority ID or its implementation/config drifts | Refuse registry startup; migrate trust configuration explicitly rather than relabeling it |
+| Sealed custody verifier absent, invalid, or mismatched | Deny active promotion; never substitute local test custody |
+| Custody projection exists without its unique protected source event | Treat as integrity failure; do not repair it into authority |
 | Context or memory provenance changed | Reassemble/re-evaluate; block promotion |
 | Server/provider/public action requested | Require separately scoped authority and evaluator |
 

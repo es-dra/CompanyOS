@@ -225,7 +225,28 @@ class ProjectionReplayer:
                 f"unsupported task event: {row['event_type']}:{task_id}"
             )
         current = TaskState(tasks[task_id]["state"])
+        required_fields = {"from", "target", "reason"}
+        optional_fields = {"accepted_evidence_id"}
+        if (
+            not required_fields <= set(payload)
+            or not set(payload) <= required_fields | optional_fields
+            or payload.get("from") != current.value
+            or not isinstance(payload.get("reason"), str)
+            or not payload["reason"].strip()
+        ):
+            raise IntegrityError(f"task state event payload is invalid: {task_id}")
         target = TaskState(payload["target"])
+        accepted_evidence_id = payload.get("accepted_evidence_id")
+        if accepted_evidence_id is not None and (
+            not isinstance(accepted_evidence_id, str)
+            or not accepted_evidence_id.strip()
+            or current not in {TaskState.EVIDENCE_PENDING, TaskState.EVALUATOR_PENDING}
+            or target
+            not in {TaskState.EVALUATOR_PENDING, TaskState.INTEGRATION_PENDING}
+        ):
+            raise IntegrityError(
+                f"task accepted-evidence linkage is invalid: {task_id}"
+            )
         try:
             require_transition(current, target)
         except Exception as exc:
