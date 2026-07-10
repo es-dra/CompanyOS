@@ -4,6 +4,10 @@ Status: implementation and migration plan, pre-release. The migration keeps
 the existing document workflow usable while moving execution authority into the
 Runtime Kernel.
 
+The current SQLite schema revision is v4. Existing databases gain the
+store-authorized event-insert trigger during explicit initialization; callers
+must use `SQLiteStore.append_event` rather than direct event-table inserts.
+
 ## Object Decisions
 
 | Object | Decision | Reason |
@@ -69,6 +73,10 @@ one fake external effect with zero provider cost.
 - context selection/rejection trace and token budget;
 - memory candidate/provenance/TTL/supersession lifecycle;
 - discovery, isolated promotion-validation, then sealed-test evaluation;
+- canonical limited records backed by a delivered real Run/Task and typed
+  accepted evidence linkage;
+- external sealed-custody attestation with a default-deny verifier before
+  active approval;
 - protected self-improvement surfaces;
 - separate durable-memory and active-rule approvals.
 

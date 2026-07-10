@@ -35,7 +35,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["evidence_state"], "structure_verification")
         self.assertGreaterEqual(result["draft_2020_12_schemas_checked"], 5)
-        self.assertEqual(result["instances_validated"], 10)
+        self.assertEqual(result["instances_validated"], 13)
         self.assertEqual(
             set(result["non_claims"]), set(STRUCTURE_VALIDATION_NON_CLAIMS)
         )

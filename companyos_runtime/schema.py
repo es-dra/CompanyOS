@@ -1,6 +1,6 @@
 """SQLite schema for the single-host durable runtime implementation."""
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 DDL = r"""
 PRAGMA foreign_keys = ON;
@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_aggregate
     ON events(aggregate_type, aggregate_id, aggregate_version);
 CREATE INDEX IF NOT EXISTS idx_events_run_task ON events(run_id, task_id, seq);
+
+CREATE TRIGGER IF NOT EXISTS events_authorized_insert
+BEFORE INSERT ON events BEGIN
+    SELECT CASE
+        WHEN companyos_event_insert_authorized(NEW.event_id, NEW.event_hash) = 1
+        THEN 1
+        ELSE RAISE(ABORT, 'event inserts require store command authority')
+    END;
+END;
 
 CREATE TRIGGER IF NOT EXISTS events_no_update
 BEFORE UPDATE ON events BEGIN
@@ -445,6 +454,24 @@ CREATE TABLE IF NOT EXISTS improvement_proposals (
     FOREIGN KEY (held_out_eval_id) REFERENCES eval_runs(eval_id),
     FOREIGN KEY (sealed_eval_id) REFERENCES eval_runs(eval_id),
     FOREIGN KEY (owner_approval_id) REFERENCES approvals(approval_id)
+);
+
+CREATE TABLE IF NOT EXISTS sealed_custody_attestations (
+    attestation_id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL UNIQUE,
+    eval_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    candidate_digest TEXT NOT NULL,
+    dataset_digest TEXT NOT NULL,
+    eval_attestation_digest TEXT NOT NULL,
+    evaluator_principal_id TEXT NOT NULL,
+    custody_provider TEXT NOT NULL,
+    custodian_id TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    attestation_digest TEXT NOT NULL UNIQUE,
+    verified_at TEXT NOT NULL,
+    FOREIGN KEY (proposal_id) REFERENCES improvement_proposals(proposal_id),
+    FOREIGN KEY (eval_id) REFERENCES eval_runs(eval_id)
 );
 
 CREATE TABLE IF NOT EXISTS integration_items (

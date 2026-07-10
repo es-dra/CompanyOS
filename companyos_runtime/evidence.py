@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Iterable, Mapping
+from urllib.parse import unquote, urlsplit
 
 from .errors import AuthorizationError, EvidenceError, IntegrityError, NotFoundError
 from .identity import IdentityManager, PrincipalRecord, Role, VerifiedPrincipal
-from .store import SQLiteStore
+from .store import SQLiteStore, protected_authority_config_digest
 from .types import (
     TERMINAL_TASK_STATES,
     EvidenceState,
@@ -24,7 +27,89 @@ from .types import (
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CLASSIFICATIONS = {"public", "publicable", "internal", "confidential", "secret"}
-_FAKE_ENVIRONMENTS = {"fake", "synthetic", "test-double", "offline-simulation"}
+_NON_REAL_ENVIRONMENTS = frozenset(
+    {
+        "demo",
+        "fake",
+        "fixture",
+        "mock",
+        "offline-sim",
+        "offline-simulation",
+        "sandbox",
+        "simulated",
+        "simulation",
+        "synthetic",
+        "test",
+        "test-double",
+        "testdouble",
+    }
+)
+_REAL_ENVIRONMENTS = frozenset(
+    {
+        "ci",
+        "controlled-live",
+        "development",
+        "local",
+        "on-device",
+        "production",
+        "staging",
+    }
+)
+_NON_REAL_ARTIFACT_KINDS = frozenset(
+    {
+        "demo",
+        "dummy",
+        "example",
+        "fake",
+        "fixture",
+        "mock",
+        "placeholder",
+        "sample",
+        "simulated-output",
+        "simulation",
+        "synthetic",
+        "test-double",
+    }
+)
+_REAL_PROMOTION_ARTIFACT_KINDS = frozenset(
+    {
+        "artifact",
+        "audit-report",
+        "benchmark-report",
+        "build-report",
+        "diff",
+        "execution-trace",
+        "failure-report",
+        "lint-report",
+        "log",
+        "patch",
+        "provider-receipt",
+        "quality-report",
+        "runtime-log",
+        "runtime-report",
+        "screenshot",
+        "test-report",
+        "trace",
+        "typecheck-report",
+        "verification-report",
+    }
+)
+_NON_REAL_URI_SCHEMES = frozenset(
+    {
+        "data",
+        "demo",
+        "example",
+        "fake",
+        "fixture",
+        "memory",
+        "mock",
+        "synthetic",
+        "test",
+    }
+)
+_REAL_PROMOTION_URI_SCHEMES = frozenset(
+    {"artifact", "evidence", "file", "git", "gs", "https", "repo", "s3"}
+)
 _ARTIFACT_PRODUCER_ROLES = frozenset(
     {
         Role.WORKER,
@@ -101,6 +186,145 @@ class EvidenceAssessment:
     reasons: tuple[str, ...]
 
 
+class ProvenanceReality(StrEnum):
+    REAL = "real"
+    NON_REAL = "non_real"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class ProvenanceClassification:
+    dimension: str
+    raw_value: str
+    canonical_value: str
+    reality: ProvenanceReality
+
+
+@dataclass(frozen=True)
+class PromotionProvenanceAssessment:
+    environment: ProvenanceClassification
+    artifact_kinds: tuple[ProvenanceClassification, ...]
+    artifact_uris: tuple[ProvenanceClassification, ...]
+
+    @property
+    def real_task_eligible(self) -> bool:
+        values = (self.environment, *self.artifact_kinds, *self.artifact_uris)
+        return all(item.reality is ProvenanceReality.REAL for item in values)
+
+    @property
+    def rejection_reasons(self) -> tuple[str, ...]:
+        values = (self.environment, *self.artifact_kinds, *self.artifact_uris)
+        return tuple(
+            f"{item.dimension}:{item.canonical_value}:{item.reality.value}"
+            for item in values
+            if item.reality is not ProvenanceReality.REAL
+        )
+
+
+def _decode_origin_value(value: str, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise EvidenceError(f"{field} must be a non-empty string")
+    decoded = unicodedata.normalize("NFKC", value.strip())
+    for _ in range(20):
+        candidate = unicodedata.normalize("NFKC", unquote(decoded))
+        if candidate == decoded:
+            break
+        decoded = candidate
+    else:
+        raise EvidenceError(f"{field} has excessive nested encoding")
+    if any(ord(character) < 32 for character in decoded):
+        raise EvidenceError(f"{field} contains control characters")
+    return decoded
+
+
+def _canonical_origin_token(value: str, field: str) -> str:
+    decoded = _decode_origin_value(value, field).casefold()
+    canonical = re.sub(r"[\s_]+", "-", decoded)
+    return re.sub(r"-+", "-", canonical).strip("-")
+
+
+def classify_evidence_environment(value: str) -> ProvenanceClassification:
+    canonical = _canonical_origin_token(value, "environment")
+    if canonical in _NON_REAL_ENVIRONMENTS:
+        reality = ProvenanceReality.NON_REAL
+    elif canonical in _REAL_ENVIRONMENTS:
+        reality = ProvenanceReality.REAL
+    else:
+        reality = ProvenanceReality.UNKNOWN
+    return ProvenanceClassification("environment", value, canonical, reality)
+
+
+def classify_artifact_kind(value: str) -> ProvenanceClassification:
+    canonical = _canonical_origin_token(value, "artifact kind")
+    if canonical in _NON_REAL_ARTIFACT_KINDS:
+        reality = ProvenanceReality.NON_REAL
+    elif canonical in _REAL_PROMOTION_ARTIFACT_KINDS:
+        reality = ProvenanceReality.REAL
+    else:
+        reality = ProvenanceReality.UNKNOWN
+    return ProvenanceClassification("artifact_kind", value, canonical, reality)
+
+
+def classify_artifact_uri(value: str) -> ProvenanceClassification:
+    decoded = _decode_origin_value(value, "artifact URI")
+    if any(character.isspace() for character in decoded):
+        return ProvenanceClassification(
+            "artifact_uri", value, decoded.casefold(), ProvenanceReality.UNKNOWN
+        )
+    try:
+        parsed = urlsplit(decoded)
+    except ValueError:
+        return ProvenanceClassification(
+            "artifact_uri", value, "<malformed-uri>", ProvenanceReality.UNKNOWN
+        )
+    if not parsed.scheme:
+        return ProvenanceClassification(
+            "artifact_uri", value, "<missing-scheme>", ProvenanceReality.UNKNOWN
+        )
+    scheme = _canonical_origin_token(parsed.scheme, "artifact URI scheme")
+    if scheme in _NON_REAL_URI_SCHEMES:
+        reality = ProvenanceReality.NON_REAL
+    elif scheme in _REAL_PROMOTION_URI_SCHEMES:
+        reality = ProvenanceReality.REAL
+    else:
+        reality = ProvenanceReality.UNKNOWN
+    if reality is ProvenanceReality.REAL and (
+        (not parsed.netloc and not parsed.path)
+        or (scheme in {"gs", "https", "s3"} and not parsed.netloc)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ProvenanceClassification(
+            "artifact_uri",
+            value,
+            f"{scheme}:malformed-or-credentialed",
+            ProvenanceReality.UNKNOWN,
+        )
+    return ProvenanceClassification("artifact_uri", value, scheme, reality)
+
+
+def classify_promotion_provenance(
+    *, environment: str, artifacts: Iterable[Mapping[str, Any]]
+) -> PromotionProvenanceAssessment:
+    """Classify whether persisted evidence may support a real-task promotion.
+
+    General structure/runtime evidence may intentionally be synthetic. This
+    stricter classifier is the reusable promotion boundary and fails closed on
+    unknown environment, kind, or URI scheme.
+    """
+
+    artifact_rows = tuple(artifacts)
+    return PromotionProvenanceAssessment(
+        environment=classify_evidence_environment(environment),
+        artifact_kinds=tuple(
+            classify_artifact_kind(str(row["kind"])) for row in artifact_rows
+        ),
+        artifact_uris=tuple(
+            classify_artifact_uri(str(row["uri"])) for row in artifact_rows
+        ),
+    )
+
+
 def _text(value: str, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise EvidenceError(f"{field} must be a non-empty string")
@@ -133,6 +357,14 @@ class EvidenceRegistry:
         self.store = store
         self.identity = identity or IdentityManager(store)
         self.policy_version = policy_version
+        self.__authority_config_digest = protected_authority_config_digest(
+            "evidence_registry", {"policy_version": policy_version}
+        )
+        self.__command_authority = store._bind_protected_command_authority(
+            self,
+            "evidence_registry",
+            config_digest=self.__authority_config_digest,
+        )
 
     @staticmethod
     def _task_scope(connection: Any, task_id: str) -> Mapping[str, Any]:
@@ -253,6 +485,8 @@ class EvidenceRegistry:
                 policy_version=self.policy_version,
                 payload=payload,
                 confidentiality=confidentiality,
+                command_authority=self.__command_authority,
+                command_owner=self,
             )
             connection.execute(
                 """
@@ -359,6 +593,8 @@ class EvidenceRegistry:
                 correlation_id=task["run_id"],
                 policy_version=self.policy_version,
                 payload=payload,
+                command_authority=self.__command_authority,
+                command_owner=self,
             )
             connection.execute(
                 """
@@ -414,7 +650,8 @@ class EvidenceRegistry:
         artifact_rows = tuple(artifacts)
         artifact_kinds = {str(row["kind"]) for row in artifact_rows}
         producer_ids = {str(row["producer_principal_id"]) for row in artifact_rows}
-        if environment in _FAKE_ENVIRONMENTS and state not in {
+        environment_origin = classify_evidence_environment(environment)
+        if environment_origin.reality is ProvenanceReality.NON_REAL and state not in {
             EvidenceState.STRUCTURE,
             EvidenceState.RUNTIME,
         }:

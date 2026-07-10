@@ -94,9 +94,14 @@ Before private COS material becomes CompanyOS content, decide:
 
 Candidate material may become a public-safe template, schema, adapter note, or
 feedback shape. It must not become an active CompanyOS rule unless it passes
-promotion-validation, a sealed test that did not select the candidate, and a
-separate exact human approval. Durable memory promotion is not active-rule
-promotion.
+the canonical real-task candidate-to-limited gate, persists the exact limited
+record, passes a later sealed test that did not select the candidate, obtains a
+verifier-accepted independent external-custody attestation, and receives a
+separate exact Owner approval. The runtime denies active promotion when no
+custody verifier is configured. Local fake custody in tests proves contract
+structure only. Non-real or unknown evidence environment, artifact kind, or
+artifact URI origin fails the limited gate after canonical alias/encoding
+classification. Durable memory promotion is not active-rule promotion.
 
 Projection decision records should satisfy:
 

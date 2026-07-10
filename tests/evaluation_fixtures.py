@@ -6,15 +6,21 @@ import hmac
 from collections.abc import Iterable, Mapping
 
 from companyos_runtime.errors import AuthorizationError
-from companyos_runtime.evaluation import EvalResultAttestation
+from companyos_runtime.evaluation import (
+    EvalResultAttestation,
+    SealedCustodyAttestation,
+)
 from companyos_runtime.identity import VerifiedPrincipal
 
 
 TEST_EVAL_PROOF = "companyos-local-test-eval-proof-v1"
+TEST_CUSTODY_PROOF = "companyos-local-test-custody-proof-v1"
 
 
 class ExactTestEvalVerifier:
     """Accept only attestations minted by ``make_eval_attestation``."""
+
+    authority_id = "companyos.test.eval-verifier.static-hmac.v1"
 
     def verify(self, attestation: EvalResultAttestation) -> None:
         expected_id = f"test-attestation:{attestation.eval_id}"
@@ -22,6 +28,19 @@ class ExactTestEvalVerifier:
             raise AuthorizationError("test evaluation proof is invalid")
         if attestation.attestation_id != expected_id:
             raise AuthorizationError("test evaluation attestation id is invalid")
+
+
+class ExactTestSealedCustodyVerifier:
+    """Local test double only; it is not evidence of real external custody."""
+
+    authority_id = "companyos.test.sealed-custody.static-hmac.v1"
+
+    def verify(self, attestation: SealedCustodyAttestation) -> None:
+        expected_id = f"test-custody:{attestation.proposal_id}:{attestation.eval_id}"
+        if not hmac.compare_digest(attestation.proof, TEST_CUSTODY_PROOF):
+            raise AuthorizationError("test sealed custody proof is invalid")
+        if attestation.attestation_id != expected_id:
+            raise AuthorizationError("test sealed custody attestation id is invalid")
 
 
 def make_eval_attestation(
@@ -53,5 +72,34 @@ def make_eval_attestation(
         status=status,
         metrics={key: float(value) for key, value in metrics.items()},
         safety_failures=tuple(safety_failures),
+        policy_version=policy_version,
+    )
+
+
+def make_sealed_custody_attestation(
+    *,
+    proposal_id: str,
+    eval_id: str,
+    project_id: str,
+    candidate_digest: str,
+    dataset_digest: str,
+    eval_attestation_digest: str,
+    evaluator: VerifiedPrincipal,
+    custody_provider: str = "test-only-custody-provider",
+    custodian_id: str = "external-test-custodian",
+    policy_version: str = "companyos-policy-v1",
+) -> SealedCustodyAttestation:
+    return SealedCustodyAttestation(
+        attestation_id=f"test-custody:{proposal_id}:{eval_id}",
+        proof=TEST_CUSTODY_PROOF,
+        proposal_id=proposal_id,
+        eval_id=eval_id,
+        project_id=project_id,
+        candidate_digest=candidate_digest,
+        dataset_digest=dataset_digest,
+        eval_attestation_digest=eval_attestation_digest,
+        evaluator_principal_id=evaluator.principal_id,
+        custody_provider=custody_provider,
+        custodian_id=custodian_id,
         policy_version=policy_version,
     )

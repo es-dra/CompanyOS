@@ -2,7 +2,14 @@
 
 from .context import ContextRegistry
 from .compiler import compile_goal, compile_task
-from .evaluation import ActiveRulePromotionRecord, EvaluationRegistry
+from .evaluation import (
+    ActiveRulePromotionRecord,
+    EvaluationRegistry,
+    LimitedRulePromotionRecord,
+    LimitedRulePromotionRequest,
+    SealedCustodyAttestation,
+    SealedCustodyVerifier,
+)
 from .evidence import EvidenceRegistry
 from .integration import IntegrationQueue
 from .identity import IdentityManager, Role, VerifiedPrincipal
@@ -41,6 +48,8 @@ __all__ = [
     "IdentityManager",
     "LeaseManager",
     "LeaseRecord",
+    "LimitedRulePromotionRecord",
+    "LimitedRulePromotionRequest",
     "MemoryRegistry",
     "ObservationRegistry",
     "OutboxEffect",
@@ -48,6 +57,8 @@ __all__ = [
     "RuntimeKernel",
     "Role",
     "RuntimeSurfaceSpec",
+    "SealedCustodyAttestation",
+    "SealedCustodyVerifier",
     "TaskSpec",
     "TaskScheduler",
     "TaskState",

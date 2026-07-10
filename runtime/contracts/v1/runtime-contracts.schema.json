@@ -21,6 +21,9 @@
     { "$ref": "#/$defs/EffectReceipt" },
     { "$ref": "#/$defs/NegativeResult" },
     { "$ref": "#/$defs/ImprovementProposal" },
+    { "$ref": "#/$defs/LimitedRulePromotionRequest" },
+    { "$ref": "#/$defs/LimitedRulePromotionRecord" },
+    { "$ref": "#/$defs/SealedCustodyRecord" },
     { "$ref": "#/$defs/ActiveRulePromotionRecord" }
   ],
   "$defs": {
@@ -464,6 +467,100 @@
         "updated_at": { "$ref": "#/$defs/Timestamp" }
       }
     },
+    "LimitedRulePromotionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id", "candidate_digest", "policy_version", "target_state",
+        "source_run_id", "source_task_id", "verification_evidence_id",
+        "verification_evidence_digest", "verification_evidence_state",
+        "verification_evaluator_verdict", "promotion_validation_eval_id",
+        "promotion_validation_dataset_digest",
+        "promotion_validation_attestation_digest",
+        "promotion_validation_query_count", "promotion_validation_status",
+        "scope", "actual_outcome_kind", "actual_outcome", "risk", "non_goals",
+        "review_condition", "rollback_or_retirement_path", "non_claim_boundary"
+      ],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_digest": { "$ref": "#/$defs/Digest" },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "target_state": { "const": "limited" },
+        "source_run_id": { "$ref": "#/$defs/NonEmptyString" },
+        "source_task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "verification_evidence_id": { "$ref": "#/$defs/NonEmptyString" },
+        "verification_evidence_digest": { "$ref": "#/$defs/Digest" },
+        "verification_evidence_state": {
+          "enum": ["structure_verification", "runtime_verification"]
+        },
+        "verification_evaluator_verdict": {
+          "enum": ["pass", "pass_with_residual_risk"]
+        },
+        "promotion_validation_eval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "promotion_validation_dataset_digest": { "$ref": "#/$defs/Digest" },
+        "promotion_validation_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "promotion_validation_query_count": { "type": "integer", "minimum": 1 },
+        "promotion_validation_status": { "const": "pass" },
+        "scope": {
+          "type": "string",
+          "pattern": "^project://[^/*]+/[^*]+$",
+          "description": "Exact bounded project scope; wildcards are forbidden."
+        },
+        "actual_outcome_kind": {
+          "enum": ["benefit", "friction_reduction", "failure_found", "failure_prevented"]
+        },
+        "actual_outcome": { "$ref": "#/$defs/NonEmptyString" },
+        "risk": { "$ref": "#/$defs/NonEmptyString" },
+        "non_goals": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "review_condition": { "$ref": "#/$defs/NonEmptyString" },
+        "rollback_or_retirement_path": { "$ref": "#/$defs/NonEmptyString" },
+        "non_claim_boundary": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "LimitedRulePromotionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotion_record_id", "request", "from_state", "owner_approval_id",
+        "owner_principal_id", "approved_at"
+      ],
+      "properties": {
+        "promotion_record_id": { "$ref": "#/$defs/NonEmptyString" },
+        "request": { "$ref": "#/$defs/LimitedRulePromotionRequest" },
+        "from_state": { "const": "owner_review" },
+        "owner_approval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "owner_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "approved_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "SealedCustodyRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_id", "proposal_id", "eval_id", "project_id",
+        "candidate_digest", "dataset_digest", "eval_attestation_digest",
+        "evaluator_principal_id", "custody_provider", "custodian_id",
+        "policy_version", "attestation_digest", "verified_at"
+      ],
+      "properties": {
+        "attestation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "proposal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "eval_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_digest": { "$ref": "#/$defs/Digest" },
+        "dataset_digest": { "$ref": "#/$defs/Digest" },
+        "eval_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "evaluator_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "custody_provider": { "$ref": "#/$defs/NonEmptyString" },
+        "custodian_id": { "$ref": "#/$defs/NonEmptyString" },
+        "policy_version": { "$ref": "#/$defs/NonEmptyString" },
+        "attestation_digest": { "$ref": "#/$defs/Digest" },
+        "verified_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
     "ActiveRulePromotionRecord": {
       "type": "object",
       "additionalProperties": false,
@@ -478,6 +575,12 @@
         "promotion_validation_query_count",
         "promotion_validation_status",
         "limited_promotion_record_id",
+        "limited_promotion_record_digest",
+        "source_task_id",
+        "verification_evidence_id",
+        "verification_evidence_digest",
+        "actual_outcome_kind",
+        "actual_outcome",
         "from_state",
         "target_state",
         "proposal_maker_principal_id",
@@ -488,6 +591,11 @@
         "sealed_dataset_use_count",
         "sealed_result_influenced_edits",
         "sealed_attestation_digest",
+        "sealed_custody_attestation_id",
+        "sealed_custody_provider",
+        "sealed_custodian_id",
+        "sealed_custody_attestation_digest",
+        "sealed_custody_verified_at",
         "safety_hard_failures",
         "eval_status",
         "evaluated_at",
@@ -495,7 +603,7 @@
         "owner_principal_id",
         "approved_at",
         "scope",
-        "review_date",
+        "review_condition",
         "non_goals",
         "rollback_or_retirement_path",
         "non_claim_boundary"
@@ -511,6 +619,14 @@
         "promotion_validation_query_count": { "type": "integer", "minimum": 1 },
         "promotion_validation_status": { "const": "pass" },
         "limited_promotion_record_id": { "$ref": "#/$defs/NonEmptyString" },
+        "limited_promotion_record_digest": { "$ref": "#/$defs/Digest" },
+        "source_task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "verification_evidence_id": { "$ref": "#/$defs/NonEmptyString" },
+        "verification_evidence_digest": { "$ref": "#/$defs/Digest" },
+        "actual_outcome_kind": {
+          "enum": ["benefit", "friction_reduction", "failure_found", "failure_prevented"]
+        },
+        "actual_outcome": { "$ref": "#/$defs/NonEmptyString" },
         "from_state": { "const": "limited" },
         "target_state": { "const": "active" },
         "proposal_maker_principal_id": { "$ref": "#/$defs/NonEmptyString" },
@@ -521,6 +637,11 @@
         "sealed_dataset_use_count": { "const": 1 },
         "sealed_result_influenced_edits": { "const": false },
         "sealed_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "sealed_custody_attestation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "sealed_custody_provider": { "$ref": "#/$defs/NonEmptyString" },
+        "sealed_custodian_id": { "$ref": "#/$defs/NonEmptyString" },
+        "sealed_custody_attestation_digest": { "$ref": "#/$defs/Digest" },
+        "sealed_custody_verified_at": { "$ref": "#/$defs/Timestamp" },
         "safety_hard_failures": { "const": 0 },
         "eval_status": { "const": "pass" },
         "evaluated_at": { "$ref": "#/$defs/Timestamp" },
@@ -528,7 +649,7 @@
         "owner_principal_id": { "$ref": "#/$defs/NonEmptyString" },
         "approved_at": { "$ref": "#/$defs/Timestamp" },
         "scope": { "$ref": "#/$defs/Scope" },
-        "review_date": { "$ref": "#/$defs/Timestamp" },
+        "review_condition": { "$ref": "#/$defs/NonEmptyString" },
         "non_goals": {
           "type": "array",
           "minItems": 1,

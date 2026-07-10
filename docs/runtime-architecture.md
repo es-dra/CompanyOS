@@ -82,7 +82,12 @@ The event envelope contains aggregate identity/version, project/run/task,
 actor and auth context, command/idempotency/correlation/causation identifiers,
 policy version, event and record time, confidentiality, payload digest, the
 previous global event hash, and the event hash. SQLite triggers reject event
-updates and deletes. Aggregate versions are optimistic-concurrency checks.
+updates and deletes. Schema v4 adds a persistent insert trigger: each
+store-managed connection registers a private one-shot callback, and
+`append_event` arms it for exactly one event ID/hash. Direct inserts, callback
+replacement, authorizer replacement, and dropping that trigger through the
+managed connection are denied. Aggregate versions are optimistic-concurrency
+checks.
 
 Core Goal/Run/Task events are accepted only with a live bearer proof, matching
 principal/session/role, event-specific role, and a per-store opaque command
@@ -92,6 +97,26 @@ metadata. Chain verification rechecks that provenance and that the referenced
 session was valid at event time; a bearer or handler string alone cannot append
 a core event. Python code able to reflect into or monkey-patch the trusted
 kernel process remains inside the stated single-process TCB.
+
+Authority-bearing non-core events are protected by the same fail-closed shape.
+`PolicyEngine`, `EvidenceRegistry`, and `EvaluationRegistry` each receive a
+per-store opaque capability bound to that exact service object and a canonical
+configuration digest. The store alone writes handler, binding, config, event,
+and authority-version metadata for approval, artifact/evidence,
+evaluation/improvement, and sealed-custody events. A token borrowed by another
+service object, reused against another store, supplied without its exact owner,
+or used for a different event class is rejected. Promotion readback verifies
+the expected handler/config digest and exact projection/event envelope. Store
+objects resolving to the same database path share one process-local authority
+domain. That domain permits only one live `EvaluationRegistry`, pins its exact
+result/custody verifier implementation types and configuration fingerprint,
+requires each verifier to declare a non-empty key/configuration-scoped
+`authority_id`, and never treats that self-declared value as standalone trust.
+Verifier objects are retained behind read-only service boundaries. This is not
+an external signature: process reflection/monkey-patching, a separate hostile
+process or raw SQLite driver with control-plane access, path/hard-link
+manipulation, and a host administrator able to replace guards or rewrite and
+rehash SQLite remain explicitly inside the TCB.
 
 `ProjectionReplayer` verifies the hash chain, replays Goal/Run/Task state
 transitions, compares replayed state with current projections, and lets an
@@ -105,7 +130,9 @@ make them event-rebuildable. Repair therefore preserves consistent operational
 fields and refuses to guess a missing task projection after execution history
 or while any task-linked secondary row survives. Leases, grants, evidence,
 observations, outbox receipts, context, memory, and evals remain durable source
-tables with audit events being expanded during hardening.
+tables; evidence and evaluation promotion-lineage events are now protected and
+cross-checked, but the secondary tables are not claimed to be universally
+event-rebuildable.
 
 ## State Machines
 
@@ -215,17 +242,45 @@ protected surfaces.
 A candidate uses three partitions: discovery/held-in, promotion-validation
 (`held_out` in the v0.2 wire name), and sealed test. Repeated promotion decisions
 make the middle set adaptive validation, not a final test. A candidate must pass
-discovery and isolated promotion-validation before owner review and limited
-rollout. Active promotion additionally requires a clean sealed evaluation plus
-a separate exact approval. The immutable `ActiveRulePromotionRecord` binds the
-candidate/policy, promotion-validation query snapshot, limited record,
-distinct maker/evaluator/owner principals, sealed eval and attestation, zero
-safety failures, exact approval, scope, review/non-goals, rollback, and
-non-claim boundary. Readback first verifies the event chain and then
-cross-checks proposal, eval, attestation, limited and both approval
-events/projections in one database snapshot. Once a sealed result influences
-another edit, that set is burned and must be replaced. The zero-cost demo stops
-at `owner_review`; it does not promote an active rule.
+discovery and isolated promotion-validation before owner review. Limited is a
+separate real-work gate, not a held-out score: the exact source Run and Task must
+be `delivered`; one structure/runtime claim must be `pass` or
+`pass_with_residual_risk`; and the Task must link that claim through the typed
+`accepted_evidence_id` transition field. The claim text is the documented actual
+outcome. `LimitedRulePromotionRequest` binds that evidence digest plus exact
+project scope, proposal risk, non-goals, review condition, and rollback into the
+Owner approval digest; the resulting event persists a canonical
+`LimitedRulePromotionRecord`. One reusable typed provenance classifier verifies
+the evidence plus every referenced artifact projection and source event, then
+canonicalizes Unicode, case, whitespace/underscore aliases, and nested percent
+encoding. Promotion environments are allowlisted to `ci`, `controlled-live`,
+`development`, `local`, `on-device`, `production`, and `staging`; artifact
+kinds are allowlisted to concrete audit/build/diff/trace/log/patch/report,
+screenshot, provider-receipt, and verification outputs; URI schemes are
+allowlisted to `artifact`, `evidence`, `file`, `git`, `gs`, `https`, `repo`,
+and `s3`, with malformed or credential-bearing URIs rejected. Known non-real
+labels and every unknown value fail closed. General
+structure/runtime evidence may still be synthetic for testing, but it cannot
+support limited promotion. A residual-risk pass can support only the explicitly
+bounded scope and retains its risk/non-goals/review conditions.
+
+Active promotion starts from that exact immutable limited record. It additionally
+requires a clean one-use sealed evaluation and an independent
+`SealedCustodyAttestation` accepted by a separately configured verifier. The
+default custody verifier denies all requests. The immutable
+`ActiveRulePromotionRecord` inherits scope, actual outcome, evidence, risk,
+non-goals, review condition, and rollback from the limited record; it also binds
+distinct maker/evaluator/custodian/Owner principals, custody provider and digest,
+zero safety failures, and the post-custody exact approval. Readback first verifies
+the event chain and then cross-checks proposal, evidence, limited, eval, custody,
+and both approvals in one database snapshot. Custody recording also verifies the
+protected proposal, sealed-eval, and eval-attachment lineage before accepting
+the external attestation; an ordinary event append or a custody projection row
+alone cannot unlock active promotion. Once a sealed result influences an edit,
+that set is burned and must be replaced. The local fake verifier exists only
+inside tests and proves structure, not real external custody. The zero-cost demo
+stops at `owner_review` and reports `blocked_synthetic_evidence`; it does not
+promote a limited or active rule.
 
 ## Security and Failure Model
 

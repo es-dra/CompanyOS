@@ -146,6 +146,74 @@ class EventStoreTests(unittest.TestCase):
 
         self.assertEqual(self.store.verify_event_chain(), 1)
 
+    def test_event_insert_requires_store_managed_command_authority(self) -> None:
+        connection = self.store.connect()
+        try:
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "not authorized"):
+                connection.execute(
+                    "INSERT INTO events(event_id) VALUES (?)", ("raw-store-insert",)
+                )
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "not authorized"):
+                connection.execute("DROP TRIGGER events_authorized_insert")
+            with self.assertRaisesRegex(
+                IntegrityError, "reserved event authority function"
+            ):
+                connection.create_function(
+                    "companyos_event_insert_authorized", 2, lambda *_: 1
+                )
+            with self.assertRaisesRegex(IntegrityError, "cannot be replaced"):
+                connection.set_authorizer(None)
+        finally:
+            connection.close()
+
+        raw_connection = sqlite3.connect(self.database_path)
+        try:
+            with self.assertRaisesRegex(
+                sqlite3.OperationalError,
+                "no such function: companyos_event_insert_authorized",
+            ):
+                raw_connection.execute(
+                    "INSERT INTO events(event_id) VALUES (?)", ("raw-driver-insert",)
+                )
+        finally:
+            raw_connection.close()
+
+        self.assertEqual(self.store.verify_event_chain(), 0)
+
+    def test_initialize_upgrades_v3_with_the_event_insert_guard(self) -> None:
+        raw_connection = sqlite3.connect(self.database_path)
+        try:
+            raw_connection.execute("DROP TRIGGER events_authorized_insert")
+            raw_connection.execute("DELETE FROM schema_migrations WHERE version = 4")
+            raw_connection.execute(
+                "INSERT OR REPLACE INTO schema_migrations(version, applied_at, checksum) "
+                "VALUES (3, '2026-01-01T00:00:00+00:00', 'legacy-v3-checksum')"
+            )
+            raw_connection.commit()
+        finally:
+            raw_connection.close()
+
+        self.store.initialize()
+        migration = self.store.query(
+            "SELECT version FROM schema_migrations WHERE version = 4"
+        )
+        trigger = self.store.query(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'events_authorized_insert'"
+        )
+        self.assertEqual(migration, [{"version": 4}])
+        self.assertEqual(trigger, [{"name": "events_authorized_insert"}])
+
+        connection = self.store.connect()
+        try:
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "not authorized"):
+                connection.execute(
+                    "INSERT INTO events(event_id) VALUES (?)",
+                    ("post-migration-raw-insert",),
+                )
+        finally:
+            connection.close()
+
     def test_payload_tampering_is_detected_even_if_database_guard_is_bypassed(
         self,
     ) -> None:

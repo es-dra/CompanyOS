@@ -12,7 +12,7 @@ from typing import Any
 from .errors import AuthorizationError, ContractError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .scope import scope_allowed, scopes_overlap, validate_task_within_goal
-from .store import SQLiteStore
+from .store import SQLiteStore, protected_authority_config_digest
 from .types import Capability, GoalSpec, LoopState, TaskSpec, TaskState, content_hash
 
 
@@ -350,6 +350,11 @@ class PolicyEngine:
     def __init__(self, store: SQLiteStore, *, identity: IdentityManager | None = None):
         self.store = store
         self.identity = identity or IdentityManager(store)
+        self.__command_authority = store._bind_protected_command_authority(
+            self,
+            "policy_engine",
+            config_digest=protected_authority_config_digest("policy_engine"),
+        )
 
     @staticmethod
     def _now(connection: Any) -> str:
@@ -643,6 +648,8 @@ class PolicyEngine:
                     "decision": decision,
                     "expires_at": expires_at,
                 },
+                command_authority=self.__command_authority,
+                command_owner=self,
             )
             connection.execute(
                 """
