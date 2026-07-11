@@ -2,14 +2,68 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
-from companyos_runtime.compiler import compile_goal, compile_task
+from companyos_runtime.compiler import (
+    GOAL_AUTHORITY_FIELDS,
+    GOAL_CONTEXTUAL_FIELDS,
+    GOAL_EXECUTABLE_FIELDS,
+    TASK_CONTEXTUAL_FIELDS,
+    TASK_EXECUTABLE_FIELDS,
+    compile_goal,
+    compile_task,
+)
 from companyos_runtime.errors import ContractError
 from companyos_runtime.types import Capability, EvidenceState, GoalSpec
 
 
 class CompilerTests(unittest.TestCase):
+    def test_authoring_schema_and_examples_match_fail_closed_compiler(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        schema = json.loads(
+            (root / "runtime/contracts/v1/authoring-contracts.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        definitions = schema["$defs"]
+        self.assertEqual(
+            set(definitions["GoalAuthoringPacket"]["properties"]),
+            set(GOAL_EXECUTABLE_FIELDS | GOAL_CONTEXTUAL_FIELDS),
+        )
+        self.assertEqual(
+            set(definitions["OwnerAuthority"]["properties"]),
+            set(GOAL_AUTHORITY_FIELDS),
+        )
+        self.assertEqual(
+            set(definitions["TaskAuthoringPacket"]["properties"]),
+            set(TASK_EXECUTABLE_FIELDS | TASK_CONTEXTUAL_FIELDS),
+        )
+
+        goal_packet = json.loads(
+            (root / "examples/authoring/goal-contract.full.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        task_packet = json.loads(
+            (root / "examples/authoring/task-packet.full.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        goal, goal_result = compile_goal(goal_packet)
+        task, task_result = compile_task(task_packet, goal=goal)
+        self.assertEqual(goal.goal_id, "goal-authoring-contract")
+        self.assertEqual(task.goal_id, goal.goal_id)
+        self.assertEqual(
+            set(goal_result.non_executable_authoring_fields),
+            set(GOAL_CONTEXTUAL_FIELDS),
+        )
+        self.assertEqual(
+            set(task_result.non_executable_authoring_fields),
+            set(TASK_CONTEXTUAL_FIELDS),
+        )
+
     def test_authoring_packets_compile_to_stable_runtime_golden(self) -> None:
         goal_authoring = {
             "goal_contract": {
@@ -164,6 +218,25 @@ class CompilerTests(unittest.TestCase):
             allowed_capabilities=tuple(Capability),
             provider_call_limit=1,
         )
+        for gate, capability in (
+            ("network", "network"),
+            ("external_download", "external_download"),
+        ):
+            packet = {
+                "task_packet": {
+                    "task_id": f"task-{gate}",
+                    "parent_goal_id": "goal-gates",
+                    "objective": "reject an ungranted open gate",
+                    "expected_delta": "quality",
+                    "primary_artifact_or_surface": "local://report",
+                    "evidence_target": "runtime_verification",
+                    "capabilities": ["read_local"],
+                    "gates": {gate: "open"},
+                }
+            }
+            with self.subTest(gate=gate):
+                with self.assertRaisesRegex(ContractError, capability):
+                    compile_task(packet, goal=goal)
         cases = {
             "repo_remote": "repo_remote",
             "server_write": "server_write",
@@ -269,32 +342,38 @@ class CompilerTests(unittest.TestCase):
                 goal=goal,
             )
 
-    def test_network_and_external_download_gates_are_not_ignored(self) -> None:
+    def test_sensitive_capability_requires_an_explicit_open_gate(self) -> None:
         goal = GoalSpec(
-            goal_id="goal-network",
-            target_outcome="compile network authority exactly",
-            success_evidence_states=(EvidenceState.RUNTIME,),
+            goal_id="goal-explicit-gates",
+            target_outcome="fail closed when a sensitive gate is omitted",
+            success_evidence_states=(EvidenceState.STRUCTURE,),
             allowed_capabilities=tuple(Capability),
-            provider_call_limit=1,
         )
-        for gate, capability in (
+        for capability, gate in (
             ("network", "network"),
             ("external_download", "external_download"),
+            ("repo_remote", "repo_remote"),
+            ("server_write", "server_write"),
+            ("provider_cost", "provider"),
+            ("public_release", "public_release"),
+            ("destructive", "destructive_operations"),
         ):
-            packet = {
-                "task_packet": {
-                    "task_id": f"task-{gate}",
-                    "parent_goal_id": "goal-network",
-                    "objective": "reject an ungranted open gate",
-                    "expected_delta": "quality",
-                    "primary_artifact_or_surface": "local://report",
-                    "evidence_target": "runtime_verification",
-                    "capabilities": ["read_local"],
-                    "gates": {gate: "open"},
+            with self.subTest(capability=capability):
+                packet = {
+                    "task_packet": {
+                        "task_id": f"task-{capability}",
+                        "parent_goal_id": goal.goal_id,
+                        "objective": "prove omitted gates are closed",
+                        "expected_delta": "quality",
+                        "primary_artifact_or_surface": "repo://companyos",
+                        "evidence_target": "structure_verification",
+                        "capabilities": ["read_local", capability],
+                        "gates": {},
+                    }
                 }
-            }
-            with self.subTest(gate=gate):
-                with self.assertRaisesRegex(ContractError, capability):
+                with self.assertRaisesRegex(
+                    ContractError, f"requires explicit open gate {gate}"
+                ):
                     compile_task(packet, goal=goal)
 
     def test_authority_and_circuit_breaker_typos_fail_closed(self) -> None:

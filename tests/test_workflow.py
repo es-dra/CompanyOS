@@ -6,7 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companyos_runtime.errors import AuthorizationError, ContractError, SimulatedCrash
+from companyos_runtime.adapters import AdapterReceipt
+from companyos_runtime.errors import (
+    AuthorizationError,
+    ContractError,
+    IntegrityError,
+    SimulatedCrash,
+)
 from companyos_runtime.fake_provider import FakeProvider
 from companyos_runtime.identity import Role
 from companyos_runtime.kernel import RuntimeKernel
@@ -784,6 +790,88 @@ class DurableWorkflowTests(unittest.TestCase):
         self.assertEqual(self.provider.effect_count(), 2)
         self.assertEqual(self.provider.effect_count(project_id="project-one"), 1)
 
+    def test_dispatch_consumes_authority_before_adapter_lookup(self) -> None:
+        class LookupCountingProvider(FakeProvider):
+            def __init__(self, path):
+                super().__init__(path)
+                self.lookup_count = 0
+
+            def lookup(self, **kwargs):
+                self.lookup_count += 1
+                return super().lookup(**kwargs)
+
+        request = STEP_REQUESTS["stale-fence"]
+        grant = self._grant(request)
+        effect = self._enqueue(request, grant.grant_id, "stale-fence")
+        self.leases.release(
+            resource_key=RESOURCE,
+            project_id="project-1",
+            task_id="task-1",
+            holder=self.worker,
+            fence=self.lease.fence,
+        )
+        provider = LookupCountingProvider(self.provider.path)
+        provider.initialize()
+        self.workflow.provider = provider
+
+        with self.assertRaises(AuthorizationError):
+            self.workflow.dispatch(effect.effect_id)
+        self.assertEqual(provider.lookup_count, 0)
+
+    def test_dispatch_verifies_persisted_step_before_adapter_lookup(self) -> None:
+        class LookupCountingProvider(FakeProvider):
+            def __init__(self, path):
+                super().__init__(path)
+                self.lookup_count = 0
+
+            def lookup(self, **kwargs):
+                self.lookup_count += 1
+                return super().lookup(**kwargs)
+
+        request = STEP_REQUESTS["before-effect"]
+        grant = self._grant(request)
+        effect = self._enqueue(request, grant.grant_id, "before-effect")
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "DELETE FROM workflow_steps WHERE task_id = ? AND step_id = ?",
+                ("task-1", "step-before-effect"),
+            )
+        provider = LookupCountingProvider(self.provider.path)
+        provider.initialize()
+        self.workflow.provider = provider
+
+        with self.assertRaisesRegex(IntegrityError, "missing persisted workflow step"):
+            self.workflow.dispatch(effect.effect_id)
+        self.assertEqual(provider.lookup_count, 0)
+
+    def test_dispatch_rejects_receipt_with_mismatched_identity(self) -> None:
+        class ForgedReceiptProvider(FakeProvider):
+            def execute(self, **kwargs):
+                receipt = super().execute(**kwargs)
+                return AdapterReceipt(
+                    adapter_id=receipt.adapter_id,
+                    project_id="another-project",
+                    idempotency_key=receipt.idempotency_key,
+                    effect_id=receipt.effect_id,
+                    request_digest=receipt.request_digest,
+                    provider_receipt=receipt.provider_receipt,
+                    status=receipt.status,
+                    closed=receipt.closed,
+                    result=receipt.result,
+                    replayed=receipt.replayed,
+                )
+
+        request = STEP_REQUESTS["before-effect"]
+        grant = self._grant(request)
+        effect = self._enqueue(request, grant.grant_id, "before-effect")
+        provider = ForgedReceiptProvider(self.provider.path)
+        provider.initialize()
+        self.workflow.provider = provider
+
+        with self.assertRaisesRegex(IntegrityError, "receipt identity"):
+            self.workflow.dispatch(effect.effect_id)
+        self.assertIsNone(self.workflow.get_receipt(effect.effect_id))
+
     def test_fake_provider_migrates_legacy_global_idempotency_safely(self) -> None:
         path = Path(self.temp.name) / "legacy-provider.db"
         request = {"operation": "write", "case": "legacy"}
@@ -830,6 +918,17 @@ class DurableWorkflowTests(unittest.TestCase):
             request_digest=digest,
         )
 
+        self.assertIsNone(replay)
+        explicitly_migrated = FakeProvider(
+            path, legacy_project_migrations={"legacy-key": "project-new"}
+        )
+        explicitly_migrated.initialize()
+        replay = explicitly_migrated.lookup(
+            project_id="project-new",
+            idempotency_key="legacy-key",
+            effect_id="legacy-effect",
+            request_digest=digest,
+        )
         self.assertIsNotNone(replay)
         assert replay is not None
         self.assertTrue(replay.replayed)

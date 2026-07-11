@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .adapters import AdapterReceipt, WorkflowAdapter
 from .errors import (
     AuthorizationError,
     ContractError,
@@ -14,7 +15,7 @@ from .errors import (
     NotFoundError,
     SimulatedCrash,
 )
-from .fake_provider import FakeProvider, FakeProviderReceipt
+from .fake_provider import FakeProviderReceipt
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .policy import PolicyEngine
 from .store import SQLiteStore
@@ -245,13 +246,14 @@ class DurableWorkflow:
     def __init__(
         self,
         store: SQLiteStore,
-        provider: FakeProvider,
+        provider: WorkflowAdapter,
         *,
         policy_version: str = "companyos-policy-v1",
         identity: IdentityManager | None = None,
     ):
         self.store = store
         self.provider = provider
+        self.adapter_id = _text(provider.adapter_id, "provider.adapter_id")
         self.identity = identity or IdentityManager(store)
         self.policy = PolicyEngine(store, identity=self.identity)
         self.policy_version = policy_version
@@ -279,6 +281,10 @@ class DurableWorkflow:
         task_id = _text(task_id, "task_id")
         step_id = _text(step_id, "step_id")
         adapter = _text(adapter, "adapter")
+        if adapter != self.adapter_id:
+            raise ContractError(
+                "workflow step adapter does not exactly match the configured adapter"
+            )
         idempotency_key = _text(idempotency_key, "idempotency_key")
         grant_id = _text(grant_id, "grant_id")
         action = _text(action, "action")
@@ -468,19 +474,26 @@ class DurableWorkflow:
         self, effect: Mapping[str, Any], envelope: Mapping[str, Any]
     ) -> None:
         rows = self.store.query(
-            "SELECT project_id, run_id, spec_json FROM tasks WHERE task_id = ?",
-            (effect["task_id"],),
+            "SELECT t.project_id, t.run_id, t.spec_json, "
+            "w.effect_id AS step_effect_id, w.input_digest, w.status AS step_status "
+            "FROM tasks AS t JOIN workflow_steps AS w ON w.task_id = t.task_id "
+            "WHERE t.task_id = ? AND w.step_id = ?",
+            (effect["task_id"], effect["step_id"]),
         )
         if not rows:
             raise IntegrityError(
-                f"outbox effect references a missing task: {effect['task_id']}"
+                "outbox effect references a missing persisted workflow step: "
+                f"{effect['task_id']}/{effect['step_id']}"
             )
         task = rows[0]
         if (
             task["project_id"] != effect["project_id"]
             or task["run_id"] != effect["run_id"]
+            or task["step_effect_id"] != effect["effect_id"]
+            or task["input_digest"] != effect["request_digest"]
+            or task["step_status"] != "queued"
         ):
-            raise IntegrityError("outbox effect task identity mismatch")
+            raise IntegrityError("outbox effect persisted workflow step mismatch")
         spec = TaskSpec.from_dict(json.loads(task["spec_json"]))
         _assert_step_binding(
             spec,
@@ -490,6 +503,43 @@ class DurableWorkflow:
             resource=envelope["resource"],
             request_digest=effect["request_digest"],
         )
+
+    def _assert_adapter_binding(self, effect: Mapping[str, Any]) -> None:
+        current_adapter_id = _text(self.provider.adapter_id, "provider.adapter_id")
+        if current_adapter_id != self.adapter_id:
+            raise IntegrityError(
+                "configured adapter identity changed after initialization"
+            )
+        if effect["adapter"] != self.adapter_id:
+            raise IntegrityError(
+                "persisted workflow step does not match the configured adapter identity"
+            )
+
+    def _assert_receipt_binding(
+        self, effect: Mapping[str, Any], receipt: AdapterReceipt
+    ) -> None:
+        expected = (
+            self.adapter_id,
+            effect["project_id"],
+            effect["idempotency_key"],
+            effect["effect_id"],
+            effect["request_digest"],
+        )
+        actual = (
+            receipt.adapter_id,
+            receipt.project_id,
+            receipt.idempotency_key,
+            receipt.effect_id,
+            receipt.request_digest,
+        )
+        if actual != expected:
+            raise IntegrityError(
+                "adapter receipt identity does not match outbox effect"
+            )
+        if not receipt.closed or receipt.status not in {"succeeded", "failed"}:
+            raise IntegrityError("adapter receipt must have a closed terminal status")
+        if not isinstance(receipt.result, Mapping):
+            raise IntegrityError("adapter receipt result must be an object")
 
     def dispatch(
         self, effect_id: str, *, fault_at: str | None = None
@@ -517,9 +567,12 @@ class DurableWorkflow:
                 checkpoint_replayed=True,
             )
         envelope = _effect_envelope(effect)
-        # Reconcile a receipt that already exists before revalidating current
-        # authority. This branch performs no new external action; refusing the
-        # checkpoint would lose a committed side effect after a crash.
+        # Lookup can expose provider-side state and may cause reconciliation.
+        # Therefore the immutable step binding and authority consumption must
+        # both be durable before the adapter is consulted, including recovery.
+        self._assert_adapter_binding(effect)
+        self._assert_persisted_step_binding(effect, envelope)
+        self.policy._consume_effect(effect_id)
         provider_receipt = self.provider.lookup(
             project_id=effect["project_id"],
             idempotency_key=effect["idempotency_key"],
@@ -527,9 +580,8 @@ class DurableWorkflow:
             request_digest=effect["request_digest"],
         )
         if provider_receipt is not None:
+            self._assert_receipt_binding(effect, provider_receipt)
             return self._checkpoint(effect, provider_receipt)
-        self._assert_persisted_step_binding(effect, envelope)
-        self.policy._consume_effect(effect_id)
         with self.store.transaction(immediate=True) as connection:
             connection.execute(
                 "UPDATE outbox SET status = 'ready' WHERE effect_id = ? AND status = 'authorization_pending'",
@@ -544,6 +596,7 @@ class DurableWorkflow:
             request_digest=effect["request_digest"],
             request=envelope["request"],
         )
+        self._assert_receipt_binding(effect, provider_receipt)
         if fault_at == "after_effect_before_checkpoint":
             raise SimulatedCrash(
                 "simulated crash after external effect before checkpoint"
@@ -554,7 +607,7 @@ class DurableWorkflow:
         return result
 
     def _checkpoint(
-        self, effect: Mapping[str, Any], receipt: FakeProviderReceipt
+        self, effect: Mapping[str, Any], receipt: AdapterReceipt
     ) -> DispatchResult:
         effect_id = effect["effect_id"]
         result_digest = content_hash(dict(receipt.result))
@@ -591,7 +644,7 @@ class DurableWorkflow:
                 run_id=effect["run_id"],
                 task_id=effect["task_id"],
                 event_type="effect_reconciled",
-                actor="fake-provider-adapter",
+                actor=f"adapter:{effect['adapter']}",
                 command_id=str(uuid.uuid4()),
                 correlation_id=effect["run_id"],
                 policy_version=self.policy_version,
@@ -745,8 +798,14 @@ class DurableWorkflow:
                 connection,
                 effect,
                 FakeProviderReceipt(
+                    adapter_id=effect["adapter"],
+                    project_id=effect["project_id"],
+                    idempotency_key=effect["idempotency_key"],
+                    effect_id=effect_id,
+                    request_digest=effect["request_digest"],
                     provider_receipt=None,
                     status="failed",
+                    closed=True,
                     result=result,
                     replayed=False,
                 ),
@@ -765,7 +824,7 @@ class DurableWorkflow:
     def _retain_negative(
         connection: Any,
         effect: Mapping[str, Any],
-        receipt: FakeProviderReceipt,
+        receipt: AdapterReceipt,
         now: str,
     ) -> None:
         fingerprint = content_hash(

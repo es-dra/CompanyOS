@@ -4,6 +4,11 @@ Use this authoring packet for substantial work. The Goal Compiler must reduce
 it to the strict `GoalSpec` below before Runtime Kernel execution. Authoring
 metadata is useful context; it is not executable authority by itself.
 
+The machine-readable accepted surface is
+`runtime/contracts/v1/authoring-contracts.schema.json`; the complete executable
+fixture is `examples/authoring/goal-contract.full.json`. `compiler.py` remains
+the semantic authority when schema shape alone cannot express a rule.
+
 ## Human authoring packet
 
 ```yaml

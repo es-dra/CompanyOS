@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "companyos-runtime"
-version = "0.2.0.dev1"
+version = "0.2.0.dev2"
 description = "Durable, policy-enforced runtime kernel for CompanyOS"
 readme = "README.md"
 requires-python = ">=3.11"

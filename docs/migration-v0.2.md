@@ -107,6 +107,13 @@ Exit: full tests, repository validation, PowerShell syntax, install safety and
 Exit: no authority drift, missed stale surface, duplicate effect, lost negative
 result, or unbounded context growth.
 
+The v0.2 candidate now contains the foundation needed to enter M5 review:
+verified online backup/new-target restore, a redacted operator snapshot, a
+minimal reusable adapter conformance harness, and Windows/Ubuntu CI definitions.
+This is implementation readiness only. A complete external-adapter recovery
+set, a successful remote CI run, host-restart/backup drills, operator alerts,
+and the 24-72 hour soak remain required before the M5 exit can be claimed.
+
 ### M6 — Bounded local-write pilot
 
 - open one local worktree resource with exact grant and fence;

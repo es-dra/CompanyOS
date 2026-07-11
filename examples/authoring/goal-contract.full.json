@@ -1,0 +1,26 @@
+{
+  "goal_contract": {
+    "goal_id": "goal-authoring-contract",
+    "source_request": "Verify the active authoring surface.",
+    "target_outcome": "A compiler-compatible goal and task",
+    "success_evidence_states": ["structure_verification"],
+    "non_goals": ["provider_smoke", "public_release"],
+    "owner_authority": {
+      "read_scope": ["repo://companyos"],
+      "write_scope": ["repo://companyos/worktree"],
+      "forbidden_scope": ["server://production"],
+      "allowed_capabilities": ["read_local", "write_local"]
+    },
+    "required_runtime_surfaces": [],
+    "context_pack": "companyos-default",
+    "project_adoption_ref": "project://companyos/adoption",
+    "evaluator_required": false,
+    "integration_policy": "review_then_merge",
+    "circuit_breakers": {
+      "max_iterations_without_new_evidence": 3,
+      "provider_budget": {"currency": "USD", "max_minor_units": 0, "max_calls": 0}
+    },
+    "stop_routes": ["suspend_for_input"],
+    "closeout_shape": "runtime-closeout-v1"
+  }
+}

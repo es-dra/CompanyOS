@@ -155,6 +155,13 @@ Each executable workflow step binds `step_id`, adapter, action, resource, and
 the SHA-256 digest of the exact request; enqueue and dispatch both revalidate
 that persisted declaration.
 
+The accepted authoring shape is closed by
+`runtime/contracts/v1/authoring-contracts.schema.json`. Complete Goal and Task
+fixtures live under `examples/authoring/`. The compiler, schemas, templates,
+and fixtures are frozen together by
+`runtime/contracts/v1/compatibility-manifest.json`; repository validation fails
+if one of those artifacts drifts without a manifest update.
+
 ## Local CLI
 
 ```powershell
@@ -165,6 +172,35 @@ python -m companyos_runtime --db .state/runtime.db status --run-id run-1
 python -m companyos_runtime --db .state/runtime.db verify
 
 ```
+
+Create a verified online backup, restore it only into a new target, and inspect
+a redacted operator snapshot:
+
+```powershell
+python -m companyos_runtime --db .state/runtime.db backup `
+  --target .backups/runtime-001.db
+python -m companyos_runtime restore `
+  --backup .backups/runtime-001.db `
+  --target .restore-tests/runtime.db
+python -m companyos_runtime `
+  --db .restore-tests/runtime.db operator-snapshot
+```
+
+The manifest verifies SQLite integrity, the event chain, and core projection
+replay/readback. It deliberately marks the recovery set incomplete: external
+adapter receipt/idempotency ledgers must be backed up separately. Restore
+refuses every existing target or SQLite sidecar. Operator output is limited to
+counts, digests, and freshness; it is not process or provider health.
+
+Run the bundled zero-cost adapter conformance report:
+
+```powershell
+python -m companyos_runtime adapter-conformance `
+  --state-dir .state/adapter-conformance
+```
+
+Project adapters can implement the public `WorkflowAdapter` protocol and use
+the reusable harness described in `docs/adapter-conformance.md`.
 
 Mutating runtime commands, outbox recovery, and projection repair are not
 exposed as unauthenticated CLI surfaces in v0.2. An embedding application must
@@ -193,6 +229,7 @@ templates/            human authoring packets
 adapters/              runtime-specific guidance; Codex is one adapter
 docs/                  architecture, operations, source sync, onboarding
 tests/                 contract, concurrency, chaos, policy, evidence and eval tests
+.github/workflows/      Windows and Ubuntu structure-verification CI
 ```
 
 ## Install Boundary

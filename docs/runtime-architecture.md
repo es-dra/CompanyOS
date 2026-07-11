@@ -209,6 +209,14 @@ but before checkpoint, and after checkpoint demonstrate replay behavior. The
 test proves one external fake effect for one key. A real adapter must expose an
 idempotency key or a reconciliation API before making the same claim.
 
+`WorkflowAdapter` is the minimum reusable project boundary: initialize, execute,
+and lookup return one stable typed receipt bound to project, idempotency key,
+effect identity, and request digest. The common conformance harness detects
+missing lookup, failed baseline execution, unstable replay, cross-project key
+leakage, crash-instead-of-deny, and identity/digest reuse. It intentionally
+does not abstract provider-specific timeout, cost, redaction, compensation, or
+unknown-result semantics out of existence; those remain adapter-local gates.
+
 Negative results are retained by stable fingerprint with recurrence count and
 repair route. They are not erased when a retry later succeeds.
 
@@ -315,13 +323,26 @@ directory, service manager, ports/processes, provider/tool gates, and runtime
 health as separate surfaces. Fresh checks, not runtime documentation, close
 drift. Worktrees/workers receive bounded write scope and close conditions.
 
+The operator snapshot is a redacted control-plane observation over one
+transaction: schema/event-head digest plus counts for work, leases, outbox,
+integration, evaluations, approvals, negative results, and observation
+freshness. It never reads out payload or context content and cannot substitute
+for process, port, service, or provider probes.
+
+Online backup uses SQLite's backup API, then verifies integrity, event chain,
+and replayed core projections. Restore is new-target-only and repeats that
+readback. The runtime database is only one member of a recovery set; external
+adapter receipt/idempotency ledgers are deliberately not implied by its
+manifest and must be governed separately. The colocated manifest is not an
+external signature, custody attestation, or power-loss durability proof.
+
 ## Evolution Path
 
 The target progression is:
 
 1. stabilize this single-host contract and event model;
-2. add adapter conformance suites, policy/audit events, backup/restore drills,
-   and bounded scheduler supervision;
+2. run adapter conformance, complete recovery-set and backup/restore drills,
+   add policy/audit events, and bounded scheduler supervision;
 3. integrate one non-critical real project read-only, then local-write only;
 4. enable remote/server/provider capabilities one at a time with exact grants,
    budgets, reconciliation, and independent evaluation;

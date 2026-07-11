@@ -111,6 +111,36 @@ class CLISubprocessTests(unittest.TestCase):
             {"goals": 1, "runs": 1, "tasks": 1},
         )
 
+    def test_backup_restore_operator_and_adapter_conformance_are_offline(self) -> None:
+        database = self.state_dir / "runtime.db"
+        backup = self.state_dir / "backup.db"
+        restored = self.state_dir / "restored.db"
+        initialized = self._run("--db", str(database), "init")
+        self.assertEqual(initialized["status"], "initialized")
+
+        backup_result = self._run(
+            "--db", str(database), "backup", "--target", str(backup)
+        )
+        self.assertEqual(backup_result["verification"]["event_chain"], "passed")
+        self.assertFalse(backup_result["recovery_set"]["complete"])
+
+        restore_result = self._run(
+            "restore", "--backup", str(backup), "--target", str(restored)
+        )
+        self.assertEqual(restore_result["status"], "restored_verified")
+        snapshot = self._run("--db", str(restored), "operator-snapshot")
+        self.assertTrue(snapshot["event_log"]["chain_verified"])
+        self.assertNotIn("database_file", snapshot)
+        self.assertRegex(snapshot["database_identity_digest"], r"^[0-9a-f]{64}$")
+
+        conformance = self._run(
+            "adapter-conformance",
+            "--state-dir",
+            str(self.state_dir / "conformance"),
+        )
+        self.assertEqual(conformance["status"], "passed")
+        self.assertIn("provider_exactly_once", conformance["non_claims"])
+
 
 if __name__ == "__main__":
     unittest.main()

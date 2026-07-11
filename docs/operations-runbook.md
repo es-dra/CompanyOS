@@ -128,6 +128,19 @@ Status output contains counts and control projections, not event payloads,
 context content, secrets, or raw provider responses. Treat the database itself
 as sensitive because it may contain internal artifacts, approvals, and context.
 
+For a machine-readable control-plane view:
+
+```powershell
+python -m companyos_runtime --db .state/runtime.db operator-snapshot
+```
+
+The snapshot verifies the event chain in one read transaction and returns only
+schema/event-head digests, state counts, lease/outbox/integration/evaluation/
+approval/negative-result counts, and observation freshness. It does not emit
+event payloads, context, requests, receipts, secrets, raw errors, or provider
+responses. It is not a runtime process probe, provider health check, alerting
+system, or production-readiness verdict.
+
 ## Restart Recovery
 
 The v0.2 draft intentionally has no unauthenticated recovery CLI. A trusted
@@ -175,13 +188,62 @@ and WAL files, and investigate; do not "repair" hashes in place.
 
 ## Backup and Restore
 
-Quiesce writers or use SQLite's online backup API. Keep the database and any
-external adapter ledger in the same recovery set. Test restoration into a new
-directory, run `verify`, then run a read-only status command. A copied runtime
-database without its external receipts cannot prove reconciliation.
+Create an online SQLite snapshot and a bound verification manifest:
+
+```powershell
+python -m companyos_runtime --db .state/runtime.db backup `
+  --target .backups/runtime-001.db
+```
+
+The command refuses an existing backup or manifest. It verifies SQLite
+`integrity_check`, schema revision/checksum, the global event chain, and core
+projection replay/readback before reporting success. The JSON output and
+manifest expose counts and digests, not source/target paths or file names.
+
+Restore defaults to a new sibling named `<backup>.restored.db`; an explicit
+new target is clearer for drills:
+
+```powershell
+python -m companyos_runtime restore `
+  --backup .backups/runtime-001.db `
+  --target .restore-tests/runtime.db
+```
+
+Restore rejects an existing target, symlink, or existing `-wal`, `-shm`, or
+`-journal` sidecar. Before writing it validates the manifest and source backup;
+after writing it reruns SQLite integrity, event-chain verification, and core
+projection replay/readback. A failed restore removes only the new files it
+created and never overwrites unknown state.
+
+The runtime backup does **not** include external adapter receipt/idempotency
+ledgers. Its manifest therefore records `recovery_set.complete = false`. Keep
+every enabled adapter ledger, keys/configuration needed to interpret receipts,
+and the runtime database in one governed recovery set. Until that complete set
+has been restored and reconciled in a drill, do not claim disaster recovery or
+exact external-effect recovery.
+
+The manifest and backup digest detect mismatch only when the manifest itself is
+trusted. They are not externally signed, hardware-attested, or proof of
+power-loss durability. Store them under independent access controls and add an
+external signature/custody record before making a cryptographic backup claim.
 
 Never place live SQLite WAL files on a network share. Do not use filesystem
 sync as multi-host coordination.
+
+## Adapter Conformance
+
+The reusable protocol and harness are documented in
+`docs/adapter-conformance.md`. The bundled offline check is:
+
+```powershell
+python -m companyos_runtime adapter-conformance `
+  --state-dir .state/adapter-conformance
+```
+
+This creates one fake-adapter effect. A real project adapter requires a
+separately authorized isolated fixture, provider-specific crash tests, cost and
+redaction gates, an external receipt-ledger recovery plan, and an independent
+evaluator. The common report alone is not provider smoke or production proof.
 
 ## Incident Routes
 
@@ -222,3 +284,8 @@ Before any release claim, require:
    release, destructive cleanup, and active-rule promotion;
 9. independent evaluator outcome;
 10. rollback, backup, and handoff recorded.
+
+Repository CI defines Windows and Ubuntu jobs for Ruff format/lint, mypy, the
+full unittest suite, repository contract validation, and clean installed-root
+validation. A workflow file existing locally is structure verification only;
+the gate becomes CI evidence only after the workflow runs on the exact commit.

@@ -255,10 +255,16 @@ class ProjectionReplayer:
         tasks[task_id]["aggregate_version"] = int(row["aggregate_version"])
         tasks[task_id]["updated_at"] = row["recorded_at"]
 
-    def verify(self) -> ReplayResult:
-        with self.store.transaction() as connection:
+    def verify(self, connection: Any | None = None) -> ReplayResult:
+        """Verify against one caller-selected snapshot or a managed transaction."""
+
+        if connection is not None:
             replayed = self._replay_in_transaction(connection)
             self._verify_projections_in_transaction(connection, replayed)
+            return replayed
+        with self.store.transaction() as managed_connection:
+            replayed = self._replay_in_transaction(managed_connection)
+            self._verify_projections_in_transaction(managed_connection, replayed)
             return replayed
 
     def _verify_projections_in_transaction(
