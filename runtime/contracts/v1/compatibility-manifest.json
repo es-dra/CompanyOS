@@ -1,0 +1,43 @@
+{
+  "schema_version": "companyos.authoring-compatibility.v1",
+  "authoring_contract_version": "1",
+  "wire_schema_version": "1",
+  "package_version": "0.2.0.dev2",
+  "artifacts": {
+    "compiler": {
+      "path": "companyos_runtime/compiler.py",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "d945e33ad1f9d0c1dd358d27b3514d9113cb17b4f5b2519a41ce3d5f5356972a"
+    },
+    "wire_schema": {
+      "path": "runtime/contracts/v1/runtime-contracts.schema.json",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "3c3dc934dba68a60910c74116374258f1b13b2c3f0df042c9dcd883bd4be648a"
+    },
+    "authoring_schema": {
+      "path": "runtime/contracts/v1/authoring-contracts.schema.json",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "8f23f607af4d052f89c93fe817a71094ae77bef0eead596cd34d41cb5b818fdd"
+    },
+    "goal_template": {
+      "path": "templates/GOAL_CONTRACT.md",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "56fe34106627e18c96bd2a31f9fa0e0854b5d1d2d385c6cd600a7ca4b1a8445d"
+    },
+    "task_template": {
+      "path": "templates/TASK_PACKET.md",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "13d8f117ae67aa215f1a45a148917a723097487864e73bb2307fc730cc0fdd56"
+    },
+    "goal_fixture": {
+      "path": "examples/authoring/goal-contract.full.json",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "6540818893d7f18345bed279de6a2905157a0058f2be2b7623f840b78efb0dc8"
+    },
+    "task_fixture": {
+      "path": "examples/authoring/task-packet.full.json",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "24785a1f6039845cadf603750b4d6c7b38fa249ee922a87eb7ba76bca17c00e8"
+    }
+  }
+}

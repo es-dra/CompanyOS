@@ -1,0 +1,80 @@
+name: runtime-kernel-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package and verification tools
+        run: python -m pip install --disable-pip-version-check -e . ruff mypy
+      - name: Ruff format
+        run: ruff format --check .
+      - name: Ruff lint
+        run: ruff check .
+      - name: Mypy
+        run: mypy companyos_runtime
+      - name: Unit, contract, concurrency, and chaos tests
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+      - name: Repository contracts
+        run: python -B -m companyos_runtime validate --repo .
+
+  install-windows:
+    name: install-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check jsonschema
+      - name: Clean install and installed-root validation
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "company-os\CompanyOS"
+          .\install.ps1 -InstallRoot $root
+          Push-Location $root
+          try {
+            python -B -m companyos_runtime validate --repo .
+          }
+          finally {
+            Pop-Location
+          }
+
+  install-ubuntu:
+    name: install-ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check jsonschema
+      - name: Clean install and installed-root validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export COMPANY_OS_HOME="$RUNNER_TEMP/company-os"
+          ./install.sh "$COMPANY_OS_HOME/CompanyOS"
+          cd "$COMPANY_OS_HOME/CompanyOS"
+          python -B -m companyos_runtime validate --repo .

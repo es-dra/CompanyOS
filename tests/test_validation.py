@@ -35,7 +35,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["evidence_state"], "structure_verification")
         self.assertGreaterEqual(result["draft_2020_12_schemas_checked"], 5)
-        self.assertEqual(result["instances_validated"], 13)
+        self.assertEqual(result["instances_validated"], 15)
         self.assertEqual(
             set(result["non_claims"]), set(STRUCTURE_VALIDATION_NON_CLAIMS)
         )
@@ -129,6 +129,41 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ContractError, "ActiveRulePromotionRecord property parity mismatch"
             ):
+                validate_repository(root)
+
+    def test_authoring_compatibility_artifact_drift_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            root = Path(raw_temp)
+            self._copy_validation_surface(root)
+            compiler_path = root / "companyos_runtime/compiler.py"
+            compiler_path.write_text(
+                compiler_path.read_text(encoding="utf-8") + "\n# drift\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ContractError, "compatibility artifact digest drifted: compiler"
+            ):
+                validate_repository(root)
+
+    def test_authoring_compatibility_digests_are_eol_portable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            root = Path(raw_temp)
+            self._copy_validation_surface(root)
+            template = root / "templates/GOAL_CONTRACT.md"
+            content = template.read_text(encoding="utf-8").replace("\n", "\r\n")
+            template.write_bytes(content.encode("utf-8"))
+
+            result = validate_repository(root)
+            self.assertEqual(result["status"], "passed")
+
+    def test_package_version_drift_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            root = Path(raw_temp)
+            self._copy_validation_surface(root)
+            (root / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContractError, "package version drifted"):
                 validate_repository(root)
 
     def test_missing_jsonschema_dependency_has_actionable_error(self) -> None:

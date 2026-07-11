@@ -8,10 +8,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .adapters import run_adapter_conformance
+from .backup import create_online_backup, restore_backup
 from .compiler import compile_goal, compile_task
 from .demo import FAULT_POINTS, run_zero_cost_demo
 from .errors import RuntimeKernelError
+from .fake_provider import FakeProvider
 from .kernel import RuntimeKernel
+from .operator import operator_snapshot
 from .replay import ProjectionReplayer
 from .store import SQLiteStore
 from .types import GoalSpec
@@ -89,6 +93,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--run-id")
 
+    backup = commands.add_parser(
+        "backup", help="create a verified online backup and manifest"
+    )
+    backup.add_argument("--target", required=True)
+    backup.add_argument("--manifest")
+
+    restore = commands.add_parser(
+        "restore", help="restore a verified backup into a new database only"
+    )
+    restore.add_argument("--backup", required=True)
+    restore.add_argument("--manifest")
+    restore.add_argument("--target")
+
+    commands.add_parser(
+        "operator-snapshot",
+        help="emit a redacted counts/digests/freshness control snapshot",
+    )
+
+    conformance = commands.add_parser(
+        "adapter-conformance",
+        help="run the zero-cost bundled adapter conformance harness",
+    )
+    conformance.add_argument("--adapter", choices=["fake"], default="fake")
+    conformance.add_argument("--state-dir", required=True)
+
     return parser
 
 
@@ -105,6 +134,23 @@ def _dispatch(args: argparse.Namespace) -> Any:
         goal = GoalSpec.from_dict(_json_file(args.goal_spec))
         _, compilation = compile_task(_json_file(args.input), goal=goal)
         return compilation.__dict__
+    if args.command == "backup":
+        return create_online_backup(args.db, args.target, manifest_path=args.manifest)
+    if args.command == "restore":
+        return restore_backup(
+            args.backup,
+            manifest_path=args.manifest,
+            target_database=args.target,
+        )
+    if args.command == "operator-snapshot":
+        return operator_snapshot(args.db)
+    if args.command == "adapter-conformance":
+        state_dir = Path(args.state_dir).expanduser().resolve()
+        provider = FakeProvider(state_dir / "fake-adapter.db")
+        provider.initialize()
+        return run_adapter_conformance(
+            provider, adapter_name=provider.adapter_id
+        ).to_wire()
     store = _store(args)
     kernel = RuntimeKernel(store)
     if args.command == "init":

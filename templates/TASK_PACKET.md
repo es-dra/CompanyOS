@@ -4,6 +4,11 @@ A Task Packet is the bounded executable unit. A thread, worker, automation, or
 worktree is only the selected execution resource. The Goal Compiler must emit a
 strict `TaskSpec`; narrative fields are not grants.
 
+The machine-readable accepted surface is
+`runtime/contracts/v1/authoring-contracts.schema.json`; the complete executable
+fixture is `examples/authoring/task-packet.full.json`. `compiler.py` remains the
+semantic authority when schema shape alone cannot express a rule.
+
 ## Human authoring packet
 
 ```yaml

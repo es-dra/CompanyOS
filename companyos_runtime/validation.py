@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import tomllib
 from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any
@@ -28,14 +31,22 @@ from .workflow import EffectReceipt, OutboxEffect
 
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 CANONICAL_CONTRACT = "runtime/contracts/v1/runtime-contracts.schema.json"
+AUTHORING_CONTRACT = "runtime/contracts/v1/authoring-contracts.schema.json"
+COMPATIBILITY_MANIFEST = "runtime/contracts/v1/compatibility-manifest.json"
 
 REQUIRED_FILES = (
+    ".gitattributes",
+    "VERSION",
+    "pyproject.toml",
+    "companyos_runtime/__init__.py",
     "AGENTS.md",
     "README.md",
     "core/authority-order.md",
     "core/evidence-states.md",
     "gfr/startup-contract.md",
     CANONICAL_CONTRACT,
+    AUTHORING_CONTRACT,
+    COMPATIBILITY_MANIFEST,
     "runtime/run-log.schema.json",
     "runtime/feedback-export.schema.json",
     "runtime/project-adoption.schema.json",
@@ -45,8 +56,10 @@ REQUIRED_FILES = (
     "templates/TASK_PACKET.md",
     "templates/EVIDENCE_PACKET.md",
     "templates/RUNTIME_SURFACE_VECTOR.md",
+    "companyos_runtime/compiler.py",
     "docs/runtime-architecture.md",
     "docs/operations-runbook.md",
+    "docs/adapter-conformance.md",
     "docs/evaluation-plan.md",
     "docs/migration-v0.2.md",
     "docs/source-sync.md",
@@ -54,6 +67,8 @@ REQUIRED_FILES = (
     "examples/feedback-export.example.json",
     "examples/project-adoption.example.json",
     "examples/projection-decision.example.json",
+    "examples/authoring/goal-contract.full.json",
+    "examples/authoring/task-packet.full.json",
 )
 
 EXAMPLE_SCHEMA_PAIRS = (
@@ -68,6 +83,14 @@ EXAMPLE_SCHEMA_PAIRS = (
     (
         "examples/projection-decision.example.json",
         "runtime/projection-decision.schema.json",
+    ),
+    (
+        "examples/authoring/goal-contract.full.json",
+        AUTHORING_CONTRACT,
+    ),
+    (
+        "examples/authoring/task-packet.full.json",
+        AUTHORING_CONTRACT,
     ),
 )
 
@@ -282,6 +305,80 @@ def _validate_contract_parity(
             set(definition["required"]),
             _dataclass_required_fields(wire_contract_type),
         )
+
+
+def _validate_compatibility_manifest(repo: Path) -> None:
+    manifest_path = repo / COMPATIBILITY_MANIFEST
+    manifest = _read_json(manifest_path)
+    if set(manifest) != {
+        "schema_version",
+        "authoring_contract_version",
+        "wire_schema_version",
+        "package_version",
+        "artifacts",
+    }:
+        raise ContractError("authoring compatibility manifest fields drifted")
+    if manifest["schema_version"] != "companyos.authoring-compatibility.v1":
+        raise ContractError("unsupported authoring compatibility manifest version")
+    package_version = (repo / "VERSION").read_text(encoding="utf-8").strip()
+    pyproject = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject_version = pyproject.get("project", {}).get("version")
+    init_text = (repo / "companyos_runtime/__init__.py").read_text(encoding="utf-8")
+    version_matches = re.findall(
+        r'(?m)^__version__\s*=\s*["\'](?P<version>[^"\']+)["\']\s*$',
+        init_text,
+    )
+    if version_matches != [package_version] or pyproject_version != package_version:
+        raise ContractError(
+            "package version drifted across VERSION, pyproject.toml, and __version__"
+        )
+    if manifest["package_version"] != package_version:
+        raise ContractError("compatibility manifest package version is stale")
+    required_artifacts = {
+        "compiler",
+        "wire_schema",
+        "authoring_schema",
+        "goal_template",
+        "task_template",
+        "goal_fixture",
+        "task_fixture",
+    }
+    artifacts = manifest["artifacts"]
+    if not isinstance(artifacts, dict) or set(artifacts) != required_artifacts:
+        raise ContractError("compatibility manifest artifact inventory drifted")
+    for name, record in artifacts.items():
+        if not isinstance(record, dict) or set(record) != {
+            "path",
+            "sha256",
+            "digest_mode",
+        }:
+            raise ContractError(f"compatibility manifest record is invalid: {name}")
+        if record["digest_mode"] != "canonical_text_sha256":
+            raise ContractError(
+                f"compatibility manifest digest mode is unsupported: {name}"
+            )
+        path = (repo / record["path"]).resolve()
+        try:
+            path.relative_to(repo)
+        except ValueError as exc:
+            raise ContractError(
+                f"compatibility manifest path escapes repository: {name}"
+            ) from exc
+        if not path.is_file():
+            raise ContractError(f"compatibility artifact is missing: {name}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ContractError(
+                f"compatibility text artifact is not UTF-8: {name}"
+            ) from exc
+        canonical = text.replace("\r\n", "\n").replace("\r", "\n")
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if digest != record["sha256"]:
+            raise ContractError(
+                f"compatibility artifact digest drifted: {name}: "
+                f"expected={record['sha256']} actual={digest}"
+            )
 
 
 def validate_repository(root: str | Path) -> dict[str, Any]:
@@ -574,7 +671,7 @@ def validate_repository(root: str | Path) -> dict[str, Any]:
     run_log_instance = {
         "run_id": "validation-run",
         "started_at": "2026-01-01T00:00:00Z",
-        "runtime_kit_version": "0.2.0.dev1",
+        "runtime_kit_version": "0.2.0.dev2",
         "project": "CompanyOS",
         "task_summary": "validate the compatibility run-log contract",
         "task_class": "contract_validation",
@@ -600,6 +697,8 @@ def validate_repository(root: str | Path) -> dict[str, Any]:
     stale = [name for name in obsolete if (repo / name).exists()]
     if stale:
         raise ContractError(f"retired duplicate surfaces are still active: {stale}")
+
+    _validate_compatibility_manifest(repo)
 
     return {
         "repository": str(repo),

@@ -1,0 +1,32 @@
+{
+  "task_packet": {
+    "task_id": "task-authoring-contract",
+    "parent_goal_id": "goal-authoring-contract",
+    "objective": "Compile the active task authoring surface",
+    "expected_delta": "quality",
+    "primary_artifact_or_surface": "repo://companyos/worktree",
+    "read_scope": ["repo://companyos"],
+    "write_scope": ["repo://companyos/worktree"],
+    "forbidden_scope": ["server://production"],
+    "capabilities": ["read_local", "write_local"],
+    "evaluator_policy": "not_required",
+    "evaluator_required": false,
+    "integration_required": true,
+    "required_runtime_surfaces": [],
+    "gates": {"provider": "closed", "repo_remote": "closed", "server_write": "closed"},
+    "workflow_steps": [],
+    "evidence_target": "structure_verification",
+    "max_attempts": 3,
+    "dirty_boundary": [],
+    "worktree_policy": "current_checkout",
+    "worker_policy": "main_thread",
+    "procedure": ["orient", "execute", "verify"],
+    "verification_route": ["python -m pytest"],
+    "integration_route": "review_pending",
+    "stop_conditions": ["contract_failure"],
+    "close_condition": "schema_and_compiler_pass",
+    "delete_or_retire_condition": "not_applicable",
+    "requirement_closure_map": [],
+    "non_claims": ["runtime_verification"]
+  }
+}

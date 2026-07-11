@@ -6,27 +6,47 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from .adapters import AdapterReceipt
 from .errors import IntegrityError
 from .types import canonical_json, content_hash, utc_now
 
 
-@dataclass(frozen=True)
-class FakeProviderReceipt:
-    provider_receipt: str | None
-    status: str
-    result: Mapping[str, Any]
-    replayed: bool
+FakeProviderReceipt = AdapterReceipt
 
 
 class FakeProvider:
     """Acts like an external idempotent service without network or provider cost."""
 
-    def __init__(self, path: str | Path):
+    _ADAPTER_ID = "fake-provider"
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        legacy_project_migrations: Mapping[str, str] | None = None,
+    ):
         self.path = Path(path).expanduser().resolve()
+        self._legacy_project_migrations = dict(legacy_project_migrations or {})
+        if any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(project, str)
+            or not project.strip()
+            or project.strip() == "__legacy__"
+            for key, project in self._legacy_project_migrations.items()
+        ):
+            raise IntegrityError(
+                "legacy project migrations require non-empty idempotency keys and project ids"
+            )
+
+    @property
+    def adapter_id(self) -> str:
+        """Stable identity compiled into every executable workflow step."""
+
+        return self._ADAPTER_ID
 
     def connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +98,12 @@ class FakeProvider:
                 )
             elif not columns:
                 connection.execute(self._provider_effects_ddl("provider_effects"))
+            for idempotency_key, project_id in self._legacy_project_migrations.items():
+                connection.execute(
+                    "UPDATE provider_effects SET project_id = ? "
+                    "WHERE project_id = '__legacy__' AND idempotency_key = ?",
+                    (project_id.strip(), idempotency_key.strip()),
+                )
 
     @staticmethod
     def _provider_effects_ddl(table_name: str) -> str:
@@ -107,17 +133,6 @@ class FakeProvider:
             "SELECT * FROM provider_effects WHERE project_id = ? AND idempotency_key = ?",
             (project_id, idempotency_key),
         ).fetchone()
-        if prior is None:
-            # Rows created before project scoping cannot be attributed safely.
-            # Reconcile an exact legacy effect, but never silently reuse it for
-            # a different effect in a newly named project.
-            prior = connection.execute(
-                """
-                SELECT * FROM provider_effects
-                WHERE project_id = '__legacy__' AND idempotency_key = ?
-                """,
-                (idempotency_key,),
-            ).fetchone()
         return prior
 
     def execute(
@@ -132,18 +147,19 @@ class FakeProvider:
         if not isinstance(project_id, str) or not project_id.strip():
             raise IntegrityError("fake-provider project_id must be non-empty")
         project_id = project_id.strip()
+        if content_hash(dict(request)) != request_digest:
+            raise IntegrityError("fake-provider request digest mismatch")
         with self.transaction() as connection:
             prior = self._find_prior(connection, project_id, idempotency_key)
             if prior is not None:
                 return self._receipt(
                     prior,
                     project_id,
+                    idempotency_key,
                     effect_id,
                     request_digest,
                     replayed=True,
                 )
-            if content_hash(dict(request)) != request_digest:
-                raise IntegrityError("fake-provider request digest mismatch")
             operation = request.get("operation", "write")
             result: dict[str, Any]
             if operation == "fail":
@@ -184,8 +200,14 @@ class FakeProvider:
                 ),
             )
             return FakeProviderReceipt(
+                adapter_id=self.adapter_id,
+                project_id=project_id,
+                idempotency_key=idempotency_key,
+                effect_id=effect_id,
+                request_digest=request_digest,
                 provider_receipt=provider_receipt,
                 status=status,
+                closed=True,
                 result=result,
                 replayed=False,
             )
@@ -211,6 +233,7 @@ class FakeProvider:
             return self._receipt(
                 prior,
                 project_id,
+                idempotency_key,
                 effect_id,
                 request_digest,
                 replayed=True,
@@ -218,17 +241,19 @@ class FakeProvider:
         finally:
             connection.close()
 
-    @staticmethod
     def _receipt(
+        self,
         row: sqlite3.Row | Mapping[str, Any],
         project_id: str,
+        idempotency_key: str,
         effect_id: str,
         request_digest: str,
         *,
         replayed: bool,
     ) -> FakeProviderReceipt:
         if (
-            row["project_id"] not in {project_id, "__legacy__"}
+            row["project_id"] != project_id
+            or row["idempotency_key"] != idempotency_key
             or row["effect_id"] != effect_id
             or row["request_digest"] != request_digest
         ):
@@ -236,8 +261,14 @@ class FakeProvider:
                 "fake-provider project/idempotency key reused with different effect"
             )
         return FakeProviderReceipt(
+            adapter_id=self.adapter_id,
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            effect_id=effect_id,
+            request_digest=request_digest,
             provider_receipt=row["provider_receipt"],
             status=row["status"],
+            closed=True,
             result=json.loads(row["result_json"]),
             replayed=replayed,
         )
