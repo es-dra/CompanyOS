@@ -105,7 +105,7 @@ class RuntimeBackupTests(unittest.TestCase):
         self.assertEqual(sidecar.read_bytes(), b"unknown-wal")
 
     def test_exclusive_create_races_never_delete_the_competing_file(self) -> None:
-        backup = self.root / "runtime-backup.db"
+        backup = (self.root / "runtime-backup.db").resolve()
         real_exclusive_create = backup_module._exclusive_create
 
         def race_backup_create(path: Path):
@@ -141,7 +141,7 @@ class RuntimeBackupTests(unittest.TestCase):
     def test_failure_cleanup_preserves_replacement_after_successful_create(
         self,
     ) -> None:
-        backup = self.root / "runtime-backup.db"
+        backup = (self.root / "runtime-backup.db").resolve()
         replacement = b"replacement-owned-by-another-worker"
 
         def replace_backup_before_failure(path: Path):
@@ -162,7 +162,7 @@ class RuntimeBackupTests(unittest.TestCase):
 
         backup.unlink()
         create_online_backup(self.source, backup)
-        target = self.root / "restored.db"
+        target = (self.root / "restored.db").resolve()
         original_inspect = backup_module._inspect_database
 
         def replace_restore_before_failure(path: Path):
