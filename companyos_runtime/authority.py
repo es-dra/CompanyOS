@@ -429,12 +429,55 @@ class CompiledGoalAuthority:
 
 
 @dataclass(frozen=True)
+class DecisionGateContract:
+    gate_id: str
+    capability: Capability
+    action: str
+    resource: str
+    request_digest: str
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "DecisionGateContract":
+        fields = {"gate_id", "capability", "action", "resource", "request_digest"}
+        _strict_keys(data, fields, fields, "decision_gate_contract")
+        try:
+            capability = Capability(_text(data["capability"], "decision gate capability"))
+        except ValueError as exc:
+            raise ContractError(str(exc)) from exc
+        resource = _text(data["resource"], "decision gate resource")
+        if "://" not in resource or "*" in resource:
+            raise ContractError("decision gate resource must be an exact typed resource")
+        request_digest = _text(data["request_digest"], "decision gate request_digest")
+        if len(request_digest) != 64 or any(
+            character not in "0123456789abcdef" for character in request_digest
+        ):
+            raise ContractError("decision gate request_digest must be lowercase SHA-256 hex")
+        return cls(
+            gate_id=_text(data["gate_id"], "decision gate id"),
+            capability=capability,
+            action=_text(data["action"], "decision gate action"),
+            resource=resource,
+            request_digest=request_digest,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "gate_id": self.gate_id,
+            "capability": self.capability.value,
+            "action": self.action,
+            "resource": self.resource,
+            "request_digest": self.request_digest,
+        }
+
+
+@dataclass(frozen=True)
 class CompiledTaskAuthority:
     version: int
     project_ref: AuthorityRef
     program_ref: AuthorityRef
     goal_ref: AuthorityRef
     required_decision_gates: tuple[str, ...]
+    decision_gate_contracts: tuple[DecisionGateContract, ...]
     provider_budget_minor_units: int
     provider_call_limit: int
     budget_currency: str
@@ -446,7 +489,7 @@ class CompiledTaskAuthority:
         fields = {
             "schema_version", "version", "project_ref", "program_ref", "goal_ref",
             "required_decision_gates", "provider_budget_minor_units",
-            "provider_call_limit", "budget_currency", "task_spec",
+            "decision_gate_contracts", "provider_call_limit", "budget_currency", "task_spec",
         }
         _strict_keys(data, fields, fields, "compiled_task_authority")
         if data["schema_version"] != "companyos.compiled-task-authority.v1":
@@ -472,6 +515,12 @@ class CompiledTaskAuthority:
             required_decision_gates=_strings(
                 data["required_decision_gates"], "required_decision_gates"
             ),
+            decision_gate_contracts=tuple(
+                DecisionGateContract.from_dict(item)
+                for item in data["decision_gate_contracts"]
+            )
+            if isinstance(data["decision_gate_contracts"], list)
+            else (),
             provider_budget_minor_units=_non_negative_int(
                 data["provider_budget_minor_units"], "task provider budget"
             ),
@@ -483,6 +532,13 @@ class CompiledTaskAuthority:
         )
         if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
             raise ContractError("task budget_currency must be three ASCII letters")
+        if not isinstance(data["decision_gate_contracts"], list):
+            raise ContractError("decision_gate_contracts must be a list")
+        gate_ids = tuple(item.gate_id for item in result.decision_gate_contracts)
+        if gate_ids != result.required_decision_gates or len(gate_ids) != len(set(gate_ids)):
+            raise ContractError(
+                "decision_gate_contracts must exactly match required_decision_gates order"
+            )
         return result
 
     def to_dict(self) -> dict[str, Any]:
@@ -493,6 +549,9 @@ class CompiledTaskAuthority:
             "program_ref": self.program_ref.to_dict(),
             "goal_ref": self.goal_ref.to_dict(),
             "required_decision_gates": list(self.required_decision_gates),
+            "decision_gate_contracts": [
+                item.to_dict() for item in self.decision_gate_contracts
+            ],
             "provider_budget_minor_units": self.provider_budget_minor_units,
             "provider_call_limit": self.provider_call_limit,
             "budget_currency": self.budget_currency,

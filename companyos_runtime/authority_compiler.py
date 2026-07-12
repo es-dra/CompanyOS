@@ -8,6 +8,7 @@ from .authority import (
     AuthorityBounds,
     CompiledGoalAuthority,
     CompiledTaskAuthority,
+    DecisionGateContract,
     ProgramSpec,
     ProjectSpec,
     _non_negative_int,
@@ -16,7 +17,7 @@ from .authority import (
 )
 from .compiler import CompilationResult, compile_goal, compile_task
 from .errors import ContractError
-from .types import Capability, GoalSpec
+from .types import Capability, GoalSpec, content_hash
 
 
 _DECISION_GATE_CAPABILITIES = {
@@ -29,6 +30,53 @@ _DECISION_GATE_RESOURCE_SCHEMES = {
     "merge": "repo://",
     "release": "release://",
 }
+_DECISION_GATE_ACTIONS = {
+    "provider": "generate",
+    "merge": "merge",
+    "release": "release",
+}
+
+
+def _compile_decision_gate_contracts(
+    task: Any, gates: tuple[str, ...]
+) -> tuple[DecisionGateContract, ...]:
+    contracts: list[DecisionGateContract] = []
+    for gate in gates:
+        capability = _DECISION_GATE_CAPABILITIES.get(gate)
+        scheme = _DECISION_GATE_RESOURCE_SCHEMES.get(gate)
+        action = _DECISION_GATE_ACTIONS.get(gate)
+        if capability is None or scheme is None or action is None:
+            raise ContractError(
+                f"Task decision gate has no explicit decision authority: {gate}"
+            )
+        resources = tuple(
+            scope
+            for scope in task.write_scope
+            if scope.casefold().startswith(scheme) and "*" not in scope
+        )
+        if len(resources) != 1:
+            raise ContractError(
+                f"Task decision gate {gate} requires exactly one exact {scheme} write_scope"
+            )
+        resource = resources[0]
+        request_digest = content_hash(
+            {
+                "gate_id": gate,
+                "capability": capability.value,
+                "action": action,
+                "resource": resource,
+            }
+        )
+        contracts.append(
+            DecisionGateContract(
+                gate_id=gate,
+                capability=capability,
+                action=action,
+                resource=resource,
+                request_digest=request_digest,
+            )
+        )
+    return tuple(contracts)
 
 
 class CurrentProgramStateProvider(Protocol):
@@ -226,6 +274,11 @@ def validate_task_authority(
         raise ContractError("Task cannot bypass Goal authority")
     if canonical.required_decision_gates != canonical_goal.required_decision_gates:
         raise ContractError("Task decision gates do not match compiled Goal authority")
+    expected_gate_contracts = _compile_decision_gate_contracts(
+        canonical.task_spec, canonical.required_decision_gates
+    )
+    if canonical.decision_gate_contracts != expected_gate_contracts:
+        raise ContractError("Task decision gate contracts do not match compiled Task scope")
     for gate in canonical.required_decision_gates:
         capability = _DECISION_GATE_CAPABILITIES.get(gate)
         if capability is None:
@@ -235,14 +288,6 @@ def validate_task_authority(
         if capability not in canonical.task_spec.capabilities:
             raise ContractError(
                 f"Task decision gate {gate} requires capability {capability.value}"
-            )
-        required_scheme = _DECISION_GATE_RESOURCE_SCHEMES[gate]
-        if not any(
-            scope.casefold().startswith(required_scheme)
-            for scope in canonical.task_spec.write_scope
-        ):
-            raise ContractError(
-                f"Task decision gate {gate} requires a {required_scheme} write_scope"
             )
     if "provider" in canonical.required_decision_gates and (
         canonical.provider_budget_minor_units < 1
@@ -320,6 +365,9 @@ def compile_task_authority(
             program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
             goal_ref=canonical_goal.reference(),
             required_decision_gates=canonical_goal.required_decision_gates,
+            decision_gate_contracts=_compile_decision_gate_contracts(
+                task, canonical_goal.required_decision_gates
+            ),
             provider_budget_minor_units=task_bounds.provider_budget_minor_units,
             provider_call_limit=task_bounds.provider_call_limit,
             budget_currency=task_bounds.budget_currency,

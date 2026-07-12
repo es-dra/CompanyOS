@@ -448,10 +448,10 @@ class AuthoritySpineTests(unittest.TestCase):
                 provider_call_limit=0,
             )
         for label, write_scope, message in (
-            ("empty", [], "provider requires a provider://"),
-            ("provider", ["repo://afs/worktrees/core/api/path.py", "release://afs/core/v1"], "provider requires a provider://"),
-            ("merge", ["provider://afs/image/keyframes/model", "release://afs/core/v1"], "merge requires a repo://"),
-            ("release", ["provider://afs/image/keyframes/model", "repo://afs/worktrees/core/api/path.py"], "release requires a release://"),
+            ("empty", [], "provider.*provider://"),
+            ("provider", ["repo://afs/worktrees/core/api/path.py", "release://afs/core/v1"], "provider.*provider://"),
+            ("merge", ["provider://afs/image/keyframes/model", "release://afs/core/v1"], "merge.*repo://"),
+            ("release", ["provider://afs/image/keyframes/model", "repo://afs/worktrees/core/api/path.py"], "release.*release://"),
         ):
             with self.subTest(label=label):
                 incompatible = task_packet()
@@ -795,6 +795,10 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
     def test_decision_approvals_succeed_end_to_end_and_missing_binding_fails(self) -> None:
         run_id = self._create_bound_running_task()
         policy = PolicyEngine(self.store)
+        gate_contracts = {
+            item.gate_id: item for item in self.task.decision_gate_contracts
+        }
+        provider_contract = gate_contracts["provider"]
         with self.assertRaisesRegex(AuthorizationError, "requires a provider://"):
             policy.record_approval(
                 project_id="afs",
@@ -811,29 +815,36 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 decision="approved",
                 ttl_seconds=600,
             )
-        approvals = (
-            (
-                Capability.PROVIDER_COST,
-                "generate",
-                "provider://afs/image/keyframes/model",
-                "provider-request",
-            ),
-            (
-                Capability.REPO_REMOTE,
-                "merge",
-                "repo://afs/worktrees/core/api/path.py",
-                "merge-request",
-            ),
-            (
-                Capability.PUBLIC_RELEASE,
-                "release",
-                "release://afs/core/v1",
-                "release-request",
-            ),
-        )
+        for label, action, digest in (
+            ("wrong-action", "invoke", provider_contract.request_digest),
+            ("wrong-request", provider_contract.action, content_hash("wrong-request")),
+        ):
+            policy.record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=self.identities.worker,
+                approver=self.identities.owner,
+                capability=provider_contract.capability,
+                action=action,
+                resource=provider_contract.resource,
+                request_digest=digest,
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+                approval_id=f"approval-{label}",
+            )
+            with self.store.transaction() as connection:
+                self.assertFalse(
+                    _required_decision_gates_satisfied(
+                        connection,
+                        self.task.task_spec.task_id,
+                        required_gates=("provider",),
+                    )
+                )
         recorded = []
-        for capability, action, resource, label in approvals:
-            digest = content_hash({"decision": label})
+        for contract in self.task.decision_gate_contracts:
             recorded.append(
                 policy.record_approval(
                     project_id="afs",
@@ -842,10 +853,10 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                     task_id=self.task.task_spec.task_id,
                     requester=self.identities.worker,
                     approver=self.identities.owner,
-                    capability=capability,
-                    action=action,
-                    resource=resource,
-                    request_digest=digest,
+                    capability=contract.capability,
+                    action=contract.action,
+                    resource=contract.resource,
+                    request_digest=contract.request_digest,
                     policy_version="companyos-policy-v1",
                     decision="approved",
                     ttl_seconds=600,
@@ -857,14 +868,14 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                     connection, self.task.task_spec.task_id
                 )
             )
-        provider_digest = content_hash({"decision": "provider-request"})
+        provider_digest = provider_contract.request_digest
         grant_kwargs = dict(
             approval_id=recorded[0].approval_id,
             issuer=self.identities.owner,
             principal=self.identities.worker,
             capability=Capability.PROVIDER_COST,
-            action="generate",
-            resource="provider://afs/image/keyframes/model",
+            action=provider_contract.action,
+            resource=provider_contract.resource,
             request_digest=provider_digest,
             policy_version="companyos-policy-v1",
             ttl_seconds=300,
@@ -905,8 +916,8 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 task_id=self.task.task_spec.task_id,
                 principal=self.identities.worker,
                 capability=Capability.PROVIDER_COST,
-                action="generate",
-                resource="provider://afs/image/keyframes/model",
+                action=provider_contract.action,
+                resource=provider_contract.resource,
                 request_digest=provider_digest,
                 idempotency_key="tampered-budget-consume",
                 cost=10,
