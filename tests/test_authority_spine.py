@@ -25,11 +25,20 @@ from companyos_runtime.authority_compiler import (
     validate_program_graph,
 )
 from companyos_runtime.errors import AuthorizationError, ContractError, IntegrityError
+from companyos_runtime.evidence import EvidenceRegistry
+from companyos_runtime.integration import IntegrationQueue
 from companyos_runtime.kernel import RuntimeKernel
+from companyos_runtime.observations import ObservationRegistry
 from companyos_runtime.policy import PolicyEngine, _required_decision_gates_satisfied
 from companyos_runtime.replay import ProjectionReplayer
 from companyos_runtime.store import SQLiteStore
-from companyos_runtime.types import Capability, content_hash
+from companyos_runtime.types import (
+    Capability,
+    EvidenceState,
+    EvaluatorVerdict,
+    IntegrationState,
+    content_hash,
+)
 from tests.identity_fixtures import IdentityFixture
 
 
@@ -64,7 +73,12 @@ def authority(
             "public_release",
         ],
         "read_scope": read_scope or ["repo://afs/**"],
-        "write_scope": write_scope or ["repo://afs/worktrees/**"],
+        "write_scope": write_scope
+        or [
+            "repo://afs/worktrees/**",
+            "provider://afs/image/**",
+            "release://afs/**",
+        ],
         "forbidden_scope": ["server://production/**"],
         "required_runtime_surfaces": surfaces if surfaces is not None else [SURFACE],
         "provider_budget_minor_units": budget,
@@ -97,7 +111,11 @@ def program_packet(project: ProjectSpec, program_id: str = "afs-core") -> dict[s
         "wave": 0,
         "authority": authority(
             read_scope=["repo://afs/src/**"],
-            write_scope=["repo://afs/worktrees/core/**"],
+            write_scope=[
+                "repo://afs/worktrees/core/**",
+                "provider://afs/image/**",
+                "release://afs/core/**",
+            ],
             budget=5_000,
             calls=5,
             gates=["provider", "merge", "release"],
@@ -111,7 +129,11 @@ def goal_packet() -> dict[str, object]:
         "target_outcome": "verified generation path",
         "success_evidence_states": ["runtime_verification"],
         "read_scope": ["repo://afs/src/api/**"],
-        "write_scope": ["repo://afs/worktrees/core/api/**"],
+        "write_scope": [
+            "repo://afs/worktrees/core/api/**",
+            "provider://afs/image/keyframes/**",
+            "release://afs/core/**",
+        ],
         "forbidden_scope": ["server://production/**"],
         "allowed_capabilities": [
             "read_local",
@@ -144,7 +166,11 @@ def task_packet(goal_id: str = "goal-core") -> dict[str, object]:
             "public_release",
         ],
         "read_scope": ["repo://afs/src/api/path.py"],
-        "write_scope": ["repo://afs/worktrees/core/api/path.py"],
+        "write_scope": [
+            "repo://afs/worktrees/core/api/path.py",
+            "provider://afs/image/keyframes/model",
+            "release://afs/core/v1",
+        ],
         "forbidden_scope": ["server://production/**"],
         "required_runtime_surfaces": [SURFACE],
         "evaluator_required": True,
@@ -421,6 +447,24 @@ class AuthoritySpineTests(unittest.TestCase):
                 provider_budget_minor_units=0,
                 provider_call_limit=0,
             )
+        for label, write_scope, message in (
+            ("empty", [], "provider requires a provider://"),
+            ("provider", ["repo://afs/worktrees/core/api/path.py", "release://afs/core/v1"], "provider requires a provider://"),
+            ("merge", ["provider://afs/image/keyframes/model", "release://afs/core/v1"], "merge requires a repo://"),
+            ("release", ["provider://afs/image/keyframes/model", "repo://afs/worktrees/core/api/path.py"], "release requires a release://"),
+        ):
+            with self.subTest(label=label):
+                incompatible = task_packet()
+                incompatible["write_scope"] = write_scope
+                with self.assertRaisesRegex(ContractError, message):
+                    compile_task_authority(
+                        incompatible,
+                        project=self.project,
+                        program=self.program,
+                        goal=self.goal,
+                        provider_budget_minor_units=500,
+                        provider_call_limit=1,
+                    )
 
 
 class AuthoritySpineSchemaTests(unittest.TestCase):
@@ -751,14 +795,44 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
     def test_decision_approvals_succeed_end_to_end_and_missing_binding_fails(self) -> None:
         run_id = self._create_bound_running_task()
         policy = PolicyEngine(self.store)
-        resource = "repo://afs/worktrees/core/api/path.py"
+        with self.assertRaisesRegex(AuthorizationError, "requires a provider://"):
+            policy.record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=self.identities.worker,
+                approver=self.identities.owner,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource="repo://afs/worktrees/core/api/path.py",
+                request_digest=content_hash({"decision": "wrong-provider-scheme"}),
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+            )
         approvals = (
-            (Capability.PROVIDER_COST, "generate", "provider-request"),
-            (Capability.REPO_REMOTE, "merge", "merge-request"),
-            (Capability.PUBLIC_RELEASE, "release", "release-request"),
+            (
+                Capability.PROVIDER_COST,
+                "generate",
+                "provider://afs/image/keyframes/model",
+                "provider-request",
+            ),
+            (
+                Capability.REPO_REMOTE,
+                "merge",
+                "repo://afs/worktrees/core/api/path.py",
+                "merge-request",
+            ),
+            (
+                Capability.PUBLIC_RELEASE,
+                "release",
+                "release://afs/core/v1",
+                "release-request",
+            ),
         )
         recorded = []
-        for capability, action, label in approvals:
+        for capability, action, resource, label in approvals:
             digest = content_hash({"decision": label})
             recorded.append(
                 policy.record_approval(
@@ -790,7 +864,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
             principal=self.identities.worker,
             capability=Capability.PROVIDER_COST,
             action="generate",
-            resource=resource,
+            resource="provider://afs/image/keyframes/model",
             request_digest=provider_digest,
             policy_version="companyos-policy-v1",
             ttl_seconds=300,
@@ -832,12 +906,83 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 principal=self.identities.worker,
                 capability=Capability.PROVIDER_COST,
                 action="generate",
-                resource=resource,
+                resource="provider://afs/image/keyframes/model",
                 request_digest=provider_digest,
                 idempotency_key="tampered-budget-consume",
                 cost=10,
                 effect_id="effect-tampered-budget",
             )
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET provider_call_limit = ? "
+                "WHERE task_id = ?",
+                (self.task.provider_call_limit, self.task.task_spec.task_id),
+            )
+
+        evidence = EvidenceRegistry(self.store)
+        artifact = evidence.register_artifact(
+            task_id=self.task.task_spec.task_id,
+            kind="test_report",
+            uri="artifact://task-core/authority-gate-report",
+            content_digest=content_hash("authority gate report"),
+            producer_session=self.identities.worker,
+        )
+        claim = evidence.record_claim(
+            task_id=self.task.task_spec.task_id,
+            claim="typed decision gates and authority lineage pass",
+            evidence_state=EvidenceState.RUNTIME,
+            artifact_refs=(artifact.artifact_id,),
+            verifier_session=self.identities.evaluator,
+            verifier_version="1",
+            environment="local",
+            evaluator_verdict=EvaluatorVerdict.PASS,
+            non_claims=("not provider smoke", "not human acceptance"),
+        )
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE tasks SET state = 'integration_pending' WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+        queue = IntegrationQueue(self.store)
+        item = queue.create(
+            task_id=self.task.task_spec.task_id,
+            source_ref="branch://authority-gates",
+            target_ref="branch://main",
+            owner=self.identities.release,
+            integration_id="integration-authority-gates",
+        )
+        delivered = queue.advance(
+            item.integration_id,
+            target=IntegrationState.DELIVERED,
+            actor=self.identities.release,
+            evidence_refs=(claim.evidence_id,),
+            reason="typed provider, merge, and release decisions approved",
+        )
+        self.assertEqual(delivered.state, IntegrationState.DELIVERED)
+        integration_event = self.store.query(
+            "SELECT event_id FROM events WHERE aggregate_type = 'integration' "
+            "AND aggregate_id = ? ORDER BY seq DESC LIMIT 1",
+            (item.integration_id,),
+        )[0]["event_id"]
+        ObservationRegistry(self.store).record(
+            project_id="afs",
+            run_id=run_id,
+            surface_key="repo:afs",
+            target_identity="commit:abc123",
+            observer=self.identities.observer,
+            probe_name="git-head",
+            probe_version="1",
+            status="healthy",
+            value={"commit": "abc123"},
+            ttl_seconds=120,
+            trigger_event_id=integration_event,
+        )
+        delivery = self.kernel.confirm_task_delivery(
+            task_id=self.task.task_spec.task_id,
+            actor=self.identities.release,
+            idempotency_key="authority-gates-task-delivery",
+        )
+        self.assertEqual(delivery["state"], "delivered")
 
         missing_store = SQLiteStore(Path(self.temp.name) / "missing-binding.db")
         missing_kernel = RuntimeKernel(
@@ -894,7 +1039,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 approver=missing_identities.owner,
                 capability=Capability.PROVIDER_COST,
                 action="generate",
-                resource=resource,
+                resource="provider://afs/image/keyframes/model",
                 request_digest=provider_digest,
                 policy_version="companyos-policy-v1",
                 decision="approved",
@@ -924,7 +1069,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 approver=self.identities.owner,
                 capability=Capability.PROVIDER_COST,
                 action="generate",
-                resource="repo://afs/worktrees/core/api/path.py",
+                resource="provider://afs/image/keyframes/model",
                 request_digest=content_hash({"decision": "tampered-budget"}),
                 policy_version="companyos-policy-v1",
                 decision="approved",

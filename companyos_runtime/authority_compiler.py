@@ -24,6 +24,11 @@ _DECISION_GATE_CAPABILITIES = {
     "merge": Capability.REPO_REMOTE,
     "release": Capability.PUBLIC_RELEASE,
 }
+_DECISION_GATE_RESOURCE_SCHEMES = {
+    "provider": "provider://",
+    "merge": "repo://",
+    "release": "release://",
+}
 
 
 class CurrentProgramStateProvider(Protocol):
@@ -230,6 +235,14 @@ def validate_task_authority(
         if capability not in canonical.task_spec.capabilities:
             raise ContractError(
                 f"Task decision gate {gate} requires capability {capability.value}"
+            )
+        required_scheme = _DECISION_GATE_RESOURCE_SCHEMES[gate]
+        if not any(
+            scope.casefold().startswith(required_scheme)
+            for scope in canonical.task_spec.write_scope
+        ):
+            raise ContractError(
+                f"Task decision gate {gate} requires a {required_scheme} write_scope"
             )
     if "provider" in canonical.required_decision_gates and (
         canonical.provider_budget_minor_units < 1
