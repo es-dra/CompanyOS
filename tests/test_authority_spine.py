@@ -1372,6 +1372,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
     def test_non_gate_requests_do_not_inherit_capability_decision_gate(self) -> None:
         run_id = self._create_bound_running_task()
         policy = PolicyEngine(self.store)
+        executor = self.identities.session("non-gate-executor", Role.SYSTEM)
         cases = (
             (
                 "repo",
@@ -1379,7 +1380,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 "open_pr",
                 "repo://afs/worktrees/core/api/path.py",
                 0,
-                self.identities.worker,
+                executor,
             ),
             (
                 "provider",
@@ -1387,7 +1388,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 "invoke",
                 "provider://afs/image/keyframes/model",
                 1,
-                self.identities.worker,
+                executor,
             ),
             (
                 "release",
@@ -1395,7 +1396,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 "publish",
                 "release://afs/core/v1",
                 0,
-                self.identities.session("release-worker", Role.RELEASE),
+                executor,
             ),
         )
         for label, capability, action, resource, cost, principal in cases:

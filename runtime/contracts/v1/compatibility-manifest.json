@@ -14,6 +14,11 @@
       "digest_mode": "canonical_text_sha256",
       "sha256": "c151a19568b619a6d4b6a127625613bcac910a77c3b7df928018863076135771"
     },
+    "authority_schema": {
+      "path": "runtime/contracts/v1/authority-spine.schema.json",
+      "digest_mode": "canonical_text_sha256",
+      "sha256": "b2644556426f4408ba037fd085a4dcf5349a8b5402df571d46f998742151644d"
+    },
     "authoring_schema": {
       "path": "runtime/contracts/v1/authoring-contracts.schema.json",
       "digest_mode": "canonical_text_sha256",

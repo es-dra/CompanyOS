@@ -31,6 +31,7 @@ from .workflow import EffectReceipt, OutboxEffect
 
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 CANONICAL_CONTRACT = "runtime/contracts/v1/runtime-contracts.schema.json"
+AUTHORITY_CONTRACT = "runtime/contracts/v1/authority-spine.schema.json"
 AUTHORING_CONTRACT = "runtime/contracts/v1/authoring-contracts.schema.json"
 COMPATIBILITY_MANIFEST = "runtime/contracts/v1/compatibility-manifest.json"
 
@@ -45,6 +46,7 @@ REQUIRED_FILES = (
     "core/evidence-states.md",
     "gfr/startup-contract.md",
     CANONICAL_CONTRACT,
+    AUTHORITY_CONTRACT,
     AUTHORING_CONTRACT,
     COMPATIBILITY_MANIFEST,
     "runtime/run-log.schema.json",
@@ -337,6 +339,7 @@ def _validate_compatibility_manifest(repo: Path) -> None:
     required_artifacts = {
         "compiler",
         "wire_schema",
+        "authority_schema",
         "authoring_schema",
         "goal_template",
         "task_template",
