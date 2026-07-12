@@ -7,6 +7,22 @@ from .adapters import (
     run_adapter_conformance,
 )
 from .backup import create_online_backup, restore_backup
+from .authority import (
+    AuthorityBounds,
+    AuthorityRef,
+    CompiledGoalAuthority,
+    CompiledTaskAuthority,
+    ProgramSpec,
+    ProgramState,
+    ProjectSpec,
+)
+from .authority_compiler import (
+    compile_goal_authority,
+    compile_program,
+    compile_project,
+    compile_task_authority,
+    validate_program_graph,
+)
 from .context import ContextRegistry
 from .compiler import compile_goal, compile_task
 from .evaluation import (
@@ -43,11 +59,19 @@ __all__ = [
     "ActiveRulePromotionRecord",
     "AdapterConformanceReport",
     "AdapterReceipt",
+    "AuthorityBounds",
+    "AuthorityRef",
     "Capability",
     "ContextRegistry",
     "create_online_backup",
     "compile_goal",
+    "compile_goal_authority",
+    "compile_program",
+    "compile_project",
     "compile_task",
+    "compile_task_authority",
+    "CompiledGoalAuthority",
+    "CompiledTaskAuthority",
     "EvidenceState",
     "EffectReceipt",
     "EvidenceRegistry",
@@ -66,6 +90,9 @@ __all__ = [
     "operator_snapshot",
     "OutboxEffect",
     "PolicyEngine",
+    "ProgramSpec",
+    "ProgramState",
+    "ProjectSpec",
     "RuntimeKernel",
     "Role",
     "restore_backup",
@@ -76,6 +103,7 @@ __all__ = [
     "TaskSpec",
     "TaskScheduler",
     "TaskState",
+    "validate_program_graph",
     "VerifiedPrincipal",
     "WorkflowAdapter",
 ]
