@@ -23,6 +23,11 @@ _DECISION_GATE_CAPABILITIES = {
     "merge": Capability.REPO_REMOTE.value,
     "release": Capability.PUBLIC_RELEASE.value,
 }
+_TYPED_RESOURCE_SCHEMES = {
+    Capability.PROVIDER_COST.value: "provider://",
+    Capability.REPO_REMOTE.value: "repo://",
+    Capability.PUBLIC_RELEASE.value: "release://",
+}
 
 
 def _validated_task_authority_binding(
@@ -620,6 +625,13 @@ class PolicyEngine:
                     f"task contract does not allow capability: {capability}"
                 )
             scope_kind = _scope_kind(capability, action)
+            required_scheme = _TYPED_RESOURCE_SCHEMES.get(capability)
+            if required_scheme is not None and not resource.casefold().startswith(
+                required_scheme
+            ):
+                raise AuthorizationError(
+                    f"{capability}/{action} requires a {required_scheme} resource"
+                )
             if any(
                 scopes_overlap(resource, forbidden)
                 for forbidden in spec.forbidden_scope
