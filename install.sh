@@ -95,7 +95,7 @@ if [ "$(canonical_path "$STAGING")" != "$STAGING" ]; then
 fi
 trap 'rm -rf -- "$STAGING"' EXIT HUP INT TERM
 
-for item in AGENTS.md LICENSE README.md VERSION pyproject.toml companyos_runtime \
+for item in .gitattributes AGENTS.md LICENSE README.md VERSION pyproject.toml companyos_runtime \
   bin core full-stack gfr runtime templates adapters privacy examples docs; do
   cp -R "$SOURCE_ROOT/$item" "$STAGING/"
 done

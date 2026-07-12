@@ -118,7 +118,7 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 try {
     Assert-NoReparsePoint -Path $staging -Label "Staging path"
     $items = @(
-        "AGENTS.md", "LICENSE", "README.md", "VERSION", "pyproject.toml",
+        ".gitattributes", "AGENTS.md", "LICENSE", "README.md", "VERSION", "pyproject.toml",
         "companyos_runtime", "bin", "core", "full-stack", "gfr", "runtime",
         "templates", "adapters", "privacy", "examples", "docs"
     )
