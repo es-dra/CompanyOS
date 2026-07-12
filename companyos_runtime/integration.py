@@ -390,9 +390,7 @@ class IntegrationQueue:
             if target_state in _FINAL:
                 from .policy import _required_decision_gates_satisfied
 
-                if not _required_decision_gates_satisfied(
-                    connection, row["task_id"]
-                ):
+                if not _required_decision_gates_satisfied(connection, row["task_id"]):
                     raise TransitionError(
                         "compiled Task required decision gates are not satisfied"
                     )

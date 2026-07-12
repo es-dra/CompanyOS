@@ -25,6 +25,8 @@ _DECISION_GATE_CAPABILITIES = {
     "merge": Capability.REPO_REMOTE,
     "release": Capability.PUBLIC_RELEASE,
 }
+
+
 class CurrentProgramStateProvider(Protocol):
     """Trusted application boundary for active/terminal Program versions."""
 
@@ -76,14 +78,22 @@ def compile_program(
         current = current_state_provider.current_program(
             project_ref=canonical_project.reference(), program_id=program.program_id
         )
-        if current is None or ProgramSpec.from_dict(current.to_dict()).reference() != program.reference():
+        if (
+            current is None
+            or ProgramSpec.from_dict(current.to_dict()).reference()
+            != program.reference()
+        ):
             raise ContractError("Program is not the provider-verified current version")
     if program.dependency_refs:
         if program_graph is None:
             raise ContractError("Program dependencies require a complete graph proof")
-        canonical_graph = tuple(ProgramSpec.from_dict(item.to_dict()) for item in program_graph)
+        canonical_graph = tuple(
+            ProgramSpec.from_dict(item.to_dict()) for item in program_graph
+        )
         if program.reference() not in {item.reference() for item in canonical_graph}:
-            raise ContractError("Program graph proof does not contain the exact Program version")
+            raise ContractError(
+                "Program graph proof does not contain the exact Program version"
+            )
         validate_program_graph(canonical_project, canonical_graph)
     return program
 
@@ -110,7 +120,10 @@ def validate_goal_authority(
         raise ContractError("Goal cannot bypass Project authority")
     if canonical.program_ref != canonical_program.reference():
         raise ContractError("Goal cannot bypass Program authority")
-    if canonical.required_decision_gates != canonical_program.authority.required_decision_gates:
+    if (
+        canonical.required_decision_gates
+        != canonical_program.authority.required_decision_gates
+    ):
         raise ContractError("Goal decision gates do not match Program authority")
     validate_child_bounds(
         canonical_program.authority,
@@ -123,7 +136,9 @@ def validate_goal_authority(
     return canonical
 
 
-def validate_program_graph(project: ProjectSpec, programs: Sequence[ProgramSpec]) -> None:
+def validate_program_graph(
+    project: ProjectSpec, programs: Sequence[ProgramSpec]
+) -> None:
     by_id = {item.program_id: item for item in programs}
     if len(by_id) != len(programs):
         raise ContractError("program graph contains duplicate program_id values")
@@ -146,7 +161,9 @@ def validate_program_graph(project: ProjectSpec, programs: Sequence[ProgramSpec]
         visit(program_id)
     for program in programs:
         if program.project_ref != project.reference():
-            raise ContractError(f"program belongs to another project: {program.program_id}")
+            raise ContractError(
+                f"program belongs to another project: {program.program_id}"
+            )
         validate_child_bounds(project.authority, program.authority, label="program")
         for dependency in program.dependency_refs:
             target = by_id.get(dependency.object_id)
@@ -224,7 +241,9 @@ def validate_task_authority(
         canonical.task_spec, canonical.required_decision_gates
     )
     if canonical.decision_gate_contracts != expected_gate_contracts:
-        raise ContractError("Task decision gate contracts do not match compiled Task scope")
+        raise ContractError(
+            "Task decision gate contracts do not match compiled Task scope"
+        )
     for gate in canonical.required_decision_gates:
         capability = _DECISION_GATE_CAPABILITIES.get(gate)
         if capability is None:
@@ -236,8 +255,7 @@ def validate_task_authority(
                 f"Task decision gate {gate} requires capability {capability.value}"
             )
     if "provider" in canonical.required_decision_gates and (
-        canonical.provider_budget_minor_units < 1
-        or canonical.provider_call_limit < 1
+        canonical.provider_budget_minor_units < 1 or canonical.provider_call_limit < 1
     ):
         raise ContractError(
             "Task provider decision gate requires a positive Task budget and call limit"
@@ -306,18 +324,18 @@ def compile_task_authority(
         required_decision_gates=program.authority.required_decision_gates,
     )
     candidate = CompiledTaskAuthority(
-            version=_positive_int(version, "task authority version"),
-            project_ref=ProjectSpec.from_dict(project.to_dict()).reference(),
-            program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
-            goal_ref=canonical_goal.reference(),
-            required_decision_gates=canonical_goal.required_decision_gates,
-            decision_gate_contracts=_canonical_decision_gate_contracts(
-                task, canonical_goal.required_decision_gates
-            ),
-            provider_budget_minor_units=task_bounds.provider_budget_minor_units,
-            provider_call_limit=task_bounds.provider_call_limit,
-            budget_currency=task_bounds.budget_currency,
-            task_spec=task,
+        version=_positive_int(version, "task authority version"),
+        project_ref=ProjectSpec.from_dict(project.to_dict()).reference(),
+        program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
+        goal_ref=canonical_goal.reference(),
+        required_decision_gates=canonical_goal.required_decision_gates,
+        decision_gate_contracts=_canonical_decision_gate_contracts(
+            task, canonical_goal.required_decision_gates
+        ),
+        provider_budget_minor_units=task_bounds.provider_budget_minor_units,
+        provider_call_limit=task_bounds.provider_call_limit,
+        budget_currency=task_bounds.budget_currency,
+        task_spec=task,
     )
     return validate_task_authority(
         candidate,

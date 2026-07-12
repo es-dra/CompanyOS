@@ -120,8 +120,13 @@ class ProjectionReplayer:
         for row in rows:
             aggregate_type = row["aggregate_type"]
             if aggregate_type not in {
-                "goal", "run", "task", "project_authority", "program_authority",
-                "goal_authority", "task_authority",
+                "goal",
+                "run",
+                "task",
+                "project_authority",
+                "program_authority",
+                "goal_authority",
+                "task_authority",
             }:
                 continue
             key = (aggregate_type, row["aggregate_id"])
@@ -137,7 +142,9 @@ class ProjectionReplayer:
             elif aggregate_type == "program_authority":
                 self._apply_program_authority(programs, projects, row, payload)
             elif aggregate_type == "goal_authority":
-                self._apply_goal_authority(goal_authorities, projects, programs, row, payload)
+                self._apply_goal_authority(
+                    goal_authorities, projects, programs, row, payload
+                )
             elif aggregate_type == "task_authority":
                 self._apply_task_authority(
                     task_authorities, goal_authorities, projects, programs, row, payload
@@ -161,16 +168,22 @@ class ProjectionReplayer:
 
     @staticmethod
     def _apply_project_authority(
-        projects: dict[str, dict[str, Any]], row: dict[str, Any], payload: dict[str, Any]
+        projects: dict[str, dict[str, Any]],
+        row: dict[str, Any],
+        payload: dict[str, Any],
     ) -> None:
         project_id = row["aggregate_id"]
         if row["event_type"] != "project_authority_adopted" or project_id in projects:
-            raise IntegrityError(f"unsupported or duplicate Project authority event: {project_id}")
+            raise IntegrityError(
+                f"unsupported or duplicate Project authority event: {project_id}"
+            )
         if set(payload) != {"project_spec", "current_program_id"}:
             raise IntegrityError("Project authority event payload is invalid")
         project = ProjectSpec.from_dict(payload["project_spec"])
         if project.project_id != project_id:
-            raise IntegrityError("Project authority aggregate and payload identifiers differ")
+            raise IntegrityError(
+                "Project authority aggregate and payload identifiers differ"
+            )
         projects[project_id] = {
             "project_id": project_id,
             "version": project.version,
@@ -189,7 +202,9 @@ class ProjectionReplayer:
     ) -> None:
         program_id = row["aggregate_id"]
         if row["event_type"] != "program_authority_adopted" or program_id in programs:
-            raise IntegrityError(f"unsupported or duplicate Program authority event: {program_id}")
+            raise IntegrityError(
+                f"unsupported or duplicate Program authority event: {program_id}"
+            )
         if set(payload) != {"program_spec", "graph_refs", "graph_digest"}:
             raise IntegrityError("Program authority event payload is invalid")
         program = ProgramSpec.from_dict(payload["program_spec"])
@@ -202,9 +217,13 @@ class ProjectionReplayer:
                 "project", project["project_id"], project["version"], project["digest"]
             )
         ):
-            raise IntegrityError("Program authority event has a missing/mismatched Project")
+            raise IntegrityError(
+                "Program authority event has a missing/mismatched Project"
+            )
         graph_refs = payload["graph_refs"]
-        if not isinstance(graph_refs, list) or payload["graph_digest"] != content_hash(graph_refs):
+        if not isinstance(graph_refs, list) or payload["graph_digest"] != content_hash(
+            graph_refs
+        ):
             raise IntegrityError("Program authority graph digest is invalid")
         if program.reference().to_dict() not in graph_refs:
             raise IntegrityError("Program authority graph omits the adopted Program")
@@ -231,7 +250,10 @@ class ProjectionReplayer:
                 if value["project_id"] == project_id
             }
             current_program_id = project["current_program_id"]
-            if not isinstance(current_program_id, str) or current_program_id not in project_programs:
+            if (
+                not isinstance(current_program_id, str)
+                or current_program_id not in project_programs
+            ):
                 raise IntegrityError("Project authority current Program is missing")
             specs = tuple(value["_spec"] for value in project_programs.values())
             expected_refs = [
@@ -244,18 +266,24 @@ class ProjectionReplayer:
                 try:
                     refs = [AuthorityRef.from_dict(item) for item in raw_refs]
                 except (ContractError, TypeError) as exc:
-                    raise IntegrityError("Program authority graph reference is malformed") from exc
+                    raise IntegrityError(
+                        "Program authority graph reference is malformed"
+                    ) from exc
                 if (
                     len(refs) != len(set(refs))
                     or any(ref.kind != "program" for ref in refs)
                     or raw_refs != expected_refs
                     or value["graph_digest"] != expected_digest
                 ):
-                    raise IntegrityError("Program authority graph is incomplete or stale")
+                    raise IntegrityError(
+                        "Program authority graph is incomplete or stale"
+                    )
             try:
                 validate_program_graph(project["_spec"], specs)
             except ContractError as exc:
-                raise IntegrityError("Program authority dependency graph is invalid") from exc
+                raise IntegrityError(
+                    "Program authority dependency graph is invalid"
+                ) from exc
             if project_programs[current_program_id]["_spec"].state.terminal:
                 raise IntegrityError("Project authority current Program is terminal")
 
@@ -269,7 +297,9 @@ class ProjectionReplayer:
     ) -> None:
         goal_id = row["aggregate_id"]
         if row["event_type"] != "goal_authority_bound" or goal_id in authorities:
-            raise IntegrityError(f"unsupported or duplicate Goal authority event: {goal_id}")
+            raise IntegrityError(
+                f"unsupported or duplicate Goal authority event: {goal_id}"
+            )
         authority = CompiledGoalAuthority.from_dict(payload)
         project = projects.get(authority.project_ref.object_id)
         program = programs.get(authority.program_ref.object_id)
@@ -278,9 +308,13 @@ class ProjectionReplayer:
             or project is None
             or program is None
             or authority.project_ref
-            != AuthorityRef("project", project["project_id"], project["version"], project["digest"])
+            != AuthorityRef(
+                "project", project["project_id"], project["version"], project["digest"]
+            )
             or authority.program_ref
-            != AuthorityRef("program", program["program_id"], program["version"], program["digest"])
+            != AuthorityRef(
+                "program", program["program_id"], program["version"], program["digest"]
+            )
             or program["project_id"] != project["project_id"]
         ):
             raise IntegrityError("Goal authority event has stale parent references")
@@ -305,7 +339,9 @@ class ProjectionReplayer:
     ) -> None:
         task_id = row["aggregate_id"]
         if row["event_type"] != "task_authority_bound" or task_id in authorities:
-            raise IntegrityError(f"unsupported or duplicate Task authority event: {task_id}")
+            raise IntegrityError(
+                f"unsupported or duplicate Task authority event: {task_id}"
+            )
         try:
             authority = CompiledTaskAuthority.from_dict(payload)
         except (ContractError, TypeError, ValueError) as exc:
@@ -320,9 +356,13 @@ class ProjectionReplayer:
             or program is None
             or authority.goal_ref != goal["_reference"]
             or authority.project_ref
-            != AuthorityRef("project", project["project_id"], project["version"], project["digest"])
+            != AuthorityRef(
+                "project", project["project_id"], project["version"], project["digest"]
+            )
             or authority.program_ref
-            != AuthorityRef("program", program["program_id"], program["version"], program["digest"])
+            != AuthorityRef(
+                "program", program["program_id"], program["version"], program["digest"]
+            )
             or goal["project_id"] != project["project_id"]
             or goal["program_id"] != program["program_id"]
         ):
@@ -511,7 +551,13 @@ class ProjectionReplayer:
             "goal_authority_bindings",
             "goal_id",
             replayed.goal_authorities,
-            ("project_id", "program_id", "authority_digest", "authority_json", "source_event_id"),
+            (
+                "project_id",
+                "program_id",
+                "authority_digest",
+                "authority_json",
+                "source_event_id",
+            ),
         )
         self._verify_table(
             connection,
@@ -519,9 +565,15 @@ class ProjectionReplayer:
             "task_id",
             replayed.task_authorities,
             (
-                "project_id", "program_id", "goal_id", "authority_digest", "authority_json",
-                "provider_budget_minor_units", "provider_call_limit",
-                "required_decision_gates_json", "source_event_id",
+                "project_id",
+                "program_id",
+                "goal_id",
+                "authority_digest",
+                "authority_json",
+                "provider_budget_minor_units",
+                "provider_call_limit",
+                "required_decision_gates_json",
+                "source_event_id",
             ),
         )
         self._verify_table(

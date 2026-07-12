@@ -180,7 +180,9 @@ class EventStoreTests(unittest.TestCase):
 
         self.assertEqual(self.store.verify_event_chain(), 0)
 
-    def test_initialize_upgrades_legacy_schema_with_the_event_insert_guard(self) -> None:
+    def test_initialize_upgrades_legacy_schema_with_the_event_insert_guard(
+        self,
+    ) -> None:
         raw_connection = sqlite3.connect(self.database_path)
         try:
             raw_connection.execute("DROP TRIGGER events_authorized_insert")

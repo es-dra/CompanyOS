@@ -62,7 +62,8 @@ class RuntimeKernel:
             str,
             tuple[ProjectSpec, ProgramSpec]
             | tuple[ProjectSpec, ProgramSpec, tuple[ProgramSpec, ...]],
-        ] | None = None,
+        ]
+        | None = None,
         current_program_state_provider: CurrentProgramStateProvider | None = None,
     ):
         self.store = store
@@ -88,14 +89,20 @@ class RuntimeKernel:
                 )
             project = ProjectSpec.from_dict(binding[0].to_dict())
             if project_id != project.project_id:
-                raise ContractError("authority_spines key must match ProjectSpec.project_id")
+                raise ContractError(
+                    "authority_spines key must match ProjectSpec.project_id"
+                )
             if len(binding) == 3:
                 raw_graph = binding[2]
                 if type(raw_graph) is not tuple or any(
                     type(item) is not ProgramSpec for item in raw_graph
                 ):
-                    raise ContractError("authority Program graph must be an exact ProgramSpec tuple")
-                graph = tuple(ProgramSpec.from_dict(item.to_dict()) for item in raw_graph)
+                    raise ContractError(
+                        "authority Program graph must be an exact ProgramSpec tuple"
+                    )
+                graph = tuple(
+                    ProgramSpec.from_dict(item.to_dict()) for item in raw_graph
+                )
             else:
                 graph = (ProgramSpec.from_dict(binding[1].to_dict()),)
             validate_program_graph(project, graph)
@@ -149,7 +156,9 @@ class RuntimeKernel:
                 project_json = canonical_json(project.to_dict())
                 graph_refs = [
                     item.reference().to_dict()
-                    for item in sorted(graph, key=lambda item: (item.wave, item.program_id))
+                    for item in sorted(
+                        graph, key=lambda item: (item.wave, item.program_id)
+                    )
                 ]
                 graph_digest = content_hash(graph_refs)
                 project_payload = {
@@ -177,7 +186,12 @@ class RuntimeKernel:
                     )
                     for item in graph
                 )
-                for aggregate_type, aggregate_id, event_type, payload in authority_events:
+                for (
+                    aggregate_type,
+                    aggregate_id,
+                    event_type,
+                    payload,
+                ) in authority_events:
                     event = connection.execute(
                         "SELECT payload_json FROM events WHERE aggregate_type = ? "
                         "AND aggregate_id = ? AND aggregate_version = 1",
@@ -209,12 +223,16 @@ class RuntimeKernel:
                         or existing["digest"] != project.reference().digest
                         or existing["current_program_id"] != program.program_id
                     ):
-                        raise ContractError("persisted adopted Project authority conflicts with configuration")
-                    current_rows = list(connection.execute(
-                        "SELECT program_id, version, digest, state, graph_digest, spec_json "
-                        "FROM adopted_programs WHERE project_id = ?",
-                        (project_id,),
-                    ))
+                        raise ContractError(
+                            "persisted adopted Project authority conflicts with configuration"
+                        )
+                    current_rows = list(
+                        connection.execute(
+                            "SELECT program_id, version, digest, state, graph_digest, spec_json "
+                            "FROM adopted_programs WHERE project_id = ?",
+                            (project_id,),
+                        )
+                    )
                     expected = {
                         item.program_id: (
                             item.version,
@@ -227,23 +245,44 @@ class RuntimeKernel:
                     }
                     actual = {
                         row["program_id"]: (
-                            int(row["version"]), row["digest"], row["state"],
-                            row["graph_digest"], row["spec_json"],
+                            int(row["version"]),
+                            row["digest"],
+                            row["state"],
+                            row["graph_digest"],
+                            row["spec_json"],
                         )
                         for row in current_rows
                     }
                     if actual != expected:
-                        raise ContractError("persisted current Program authority conflicts with configuration")
+                        raise ContractError(
+                            "persisted current Program authority conflicts with configuration"
+                        )
                     continue
                 now = utc_now()
                 connection.execute(
                     "INSERT INTO adopted_projects(project_id, version, digest, spec_json, current_program_id, adopted_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (project_id, project.version, project.reference().digest, project_json, program.program_id, now),
+                    (
+                        project_id,
+                        project.version,
+                        project.reference().digest,
+                        project_json,
+                        program.program_id,
+                        now,
+                    ),
                 )
                 for item in graph:
                     connection.execute(
                         "INSERT INTO adopted_programs(program_id, project_id, version, digest, state, graph_digest, spec_json, adopted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (item.program_id, project_id, item.version, item.reference().digest, item.state.value, graph_digest, canonical_json(item.to_dict()), now),
+                        (
+                            item.program_id,
+                            project_id,
+                            item.version,
+                            item.reference().digest,
+                            item.state.value,
+                            graph_digest,
+                            canonical_json(item.to_dict()),
+                            now,
+                        ),
                     )
 
     def _persisted_authority_spine(
@@ -255,21 +294,32 @@ class RuntimeKernel:
             ).fetchone()
             if project_row is None:
                 return None
-            program_rows = list(connection.execute(
-                "SELECT * FROM adopted_programs WHERE project_id = ? ORDER BY program_id",
-                (project_id,),
-            ))
+            program_rows = list(
+                connection.execute(
+                    "SELECT * FROM adopted_programs WHERE project_id = ? ORDER BY program_id",
+                    (project_id,),
+                )
+            )
             program_row = next(
-                (row for row in program_rows if row["program_id"] == project_row["current_program_id"]),
+                (
+                    row
+                    for row in program_rows
+                    if row["program_id"] == project_row["current_program_id"]
+                ),
                 None,
             )
             if program_row is None:
-                raise ContractError("adopted Project current Program projection is missing")
+                raise ContractError(
+                    "adopted Project current Program projection is missing"
+                )
             project = ProjectSpec.from_dict(json.loads(project_row["spec_json"]))
             graph = tuple(
-                ProgramSpec.from_dict(json.loads(row["spec_json"])) for row in program_rows
+                ProgramSpec.from_dict(json.loads(row["spec_json"]))
+                for row in program_rows
             )
-            program = next(item for item in graph if item.program_id == program_row["program_id"])
+            program = next(
+                item for item in graph if item.program_id == program_row["program_id"]
+            )
             graph_refs = [
                 item.reference().to_dict()
                 for item in sorted(graph, key=lambda item: (item.wave, item.program_id))
@@ -292,7 +342,9 @@ class RuntimeKernel:
                     for row, item in zip(program_rows, graph)
                 )
             ):
-                raise ContractError("persisted authority registry digest/state mismatch")
+                raise ContractError(
+                    "persisted authority registry digest/state mismatch"
+                )
             if program.state.terminal:
                 raise ContractError("persisted current Program is terminal")
             return project, program, graph
@@ -494,7 +546,14 @@ class RuntimeKernel:
                 )
                 connection.execute(
                     "INSERT INTO goal_authority_bindings(goal_id, project_id, program_id, authority_digest, authority_json, source_event_id) VALUES (?, ?, ?, ?, ?, ?)",
-                    (spec.goal_id, project_id, canonical_authority.program_ref.object_id, content_hash(canonical_authority.to_dict()), canonical_json(canonical_authority.to_dict()), binding_event["event_id"]),
+                    (
+                        spec.goal_id,
+                        project_id,
+                        canonical_authority.program_ref.object_id,
+                        content_hash(canonical_authority.to_dict()),
+                        canonical_json(canonical_authority.to_dict()),
+                        binding_event["event_id"],
+                    ),
                 )
                 self._authority_goal_bindings[spec.goal_id] = canonical_authority
             return result
@@ -610,9 +669,16 @@ class RuntimeKernel:
                         (spec.goal_id, project_id),
                     ).fetchone()
                 if row is not None:
-                    goal_authority = CompiledGoalAuthority.from_dict(json.loads(row["authority_json"]))
-                    if content_hash(goal_authority.to_dict()) != row["authority_digest"]:
-                        raise ContractError("persisted Goal authority binding digest mismatch")
+                    goal_authority = CompiledGoalAuthority.from_dict(
+                        json.loads(row["authority_json"])
+                    )
+                    if (
+                        content_hash(goal_authority.to_dict())
+                        != row["authority_digest"]
+                    ):
+                        raise ContractError(
+                            "persisted Goal authority binding digest mismatch"
+                        )
             if goal_authority is None:
                 raise ContractError(
                     "authority-enabled goal binding is unavailable; recreate the "
@@ -742,7 +808,23 @@ class RuntimeKernel:
                 )
                 connection.execute(
                     "INSERT INTO task_authority_bindings(task_id, project_id, program_id, goal_id, authority_digest, authority_json, provider_budget_minor_units, provider_call_limit, required_decision_gates_json, source_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (spec.task_id, project_id, canonical_task_authority.program_ref.object_id, spec.goal_id, content_hash(canonical_task_authority.to_dict()), canonical_json(canonical_task_authority.to_dict()), canonical_task_authority.provider_budget_minor_units, canonical_task_authority.provider_call_limit, canonical_json([item.to_dict() for item in canonical_task_authority.decision_gate_contracts]), binding_event["event_id"]),
+                    (
+                        spec.task_id,
+                        project_id,
+                        canonical_task_authority.program_ref.object_id,
+                        spec.goal_id,
+                        content_hash(canonical_task_authority.to_dict()),
+                        canonical_json(canonical_task_authority.to_dict()),
+                        canonical_task_authority.provider_budget_minor_units,
+                        canonical_task_authority.provider_call_limit,
+                        canonical_json(
+                            [
+                                item.to_dict()
+                                for item in canonical_task_authority.decision_gate_contracts
+                            ]
+                        ),
+                        binding_event["event_id"],
+                    ),
                 )
             return result
 

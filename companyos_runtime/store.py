@@ -484,7 +484,8 @@ class SQLiteStore:
             connection.executescript("BEGIN IMMEDIATE;\n" + DDL + "\nCOMMIT;")
             connection.execute("BEGIN IMMEDIATE")
             approval_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(approvals)")
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(approvals)")
             }
             for name, declaration in (
                 ("authority_binding_digest", "TEXT"),
