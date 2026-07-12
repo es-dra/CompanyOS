@@ -9,7 +9,12 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from .authority import CompiledGoalAuthority, CompiledTaskAuthority, ProgramSpec, ProjectSpec
+from .authority import (
+    CompiledGoalAuthority,
+    CompiledTaskAuthority,
+    ProgramSpec,
+    ProjectSpec,
+)
 from .errors import AuthorizationError, ContractError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .scope import scope_allowed, scopes_overlap, validate_task_within_goal
@@ -58,9 +63,13 @@ def _validated_task_authority_binding(
             raise AuthorizationError("adopted Task authority binding is missing")
         return None
     try:
-        authority = CompiledTaskAuthority.from_dict(json.loads(binding["authority_json"]))
+        authority = CompiledTaskAuthority.from_dict(
+            json.loads(binding["authority_json"])
+        )
     except (ContractError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise AuthorizationError("persisted Task authority binding is malformed") from exc
+        raise AuthorizationError(
+            "persisted Task authority binding is malformed"
+        ) from exc
     source_event = connection.execute(
         "SELECT aggregate_type, aggregate_id, project_id, task_id, event_type, "
         "payload_json, payload_digest FROM events WHERE event_id = ?",
@@ -112,7 +121,9 @@ def _validated_task_authority_binding(
         program = ProgramSpec.from_dict(json.loads(program_row["spec_json"]))
         goal = CompiledGoalAuthority.from_dict(json.loads(goal_row["authority_json"]))
     except (ContractError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise AuthorizationError("persisted Task authority parent is malformed") from exc
+        raise AuthorizationError(
+            "persisted Task authority parent is malformed"
+        ) from exc
     if (
         authority.project_ref != project.reference()
         or authority.program_ref != program.reference()
@@ -140,7 +151,9 @@ def _required_decision_gates_satisfied(
     contracts = {item.gate_id: item for item in authority.decision_gate_contracts}
     gates = tuple(contracts)
     binding_version = authority.version
-    gates_to_check = tuple(required_gates) if required_gates is not None else tuple(gates)
+    gates_to_check = (
+        tuple(required_gates) if required_gates is not None else tuple(gates)
+    )
     if any(gate not in gates for gate in gates_to_check):
         return False
     for gate in gates_to_check:
@@ -172,6 +185,7 @@ def _required_decision_gates_satisfied(
         if approved is None:
             return False
     return True
+
 
 # Every capability has one explicit TaskSpec scope source and a closed action
 # vocabulary. Network is the only dual-mode capability: its exact action
@@ -1588,11 +1602,15 @@ class PolicyEngine:
                     if int(consumed["cost"]) + cost > int(
                         task_authority.provider_budget_minor_units
                     ):
-                        raise AuthorizationError("compiled Task provider budget exceeded")
+                        raise AuthorizationError(
+                            "compiled Task provider budget exceeded"
+                        )
                     if int(consumed["calls"]) + 1 > int(
                         task_authority.provider_call_limit
                     ):
-                        raise AuthorizationError("compiled Task provider call limit exceeded")
+                        raise AuthorizationError(
+                            "compiled Task provider call limit exceeded"
+                        )
 
             used_at = self._now(connection)
             connection.execute(

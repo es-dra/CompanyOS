@@ -125,7 +125,9 @@ class AuthorityBounds:
         except ValueError as exc:
             raise ContractError(str(exc)) from exc
         if len(capabilities) != len(set(capabilities)):
-            raise ContractError("authority_bounds.capabilities must not contain duplicates")
+            raise ContractError(
+                "authority_bounds.capabilities must not contain duplicates"
+            )
         raw_surfaces = data["required_runtime_surfaces"]
         if not isinstance(raw_surfaces, list) or not all(
             isinstance(item, Mapping) for item in raw_surfaces
@@ -187,7 +189,9 @@ def validate_bounds(bounds: AuthorityBounds, *, label: str) -> None:
         and bounds.budget_currency == bounds.budget_currency.upper()
     )
     if not currency_valid:
-        raise ContractError(f"{label} budget currency must be three uppercase ASCII letters")
+        raise ContractError(
+            f"{label} budget currency must be three uppercase ASCII letters"
+        )
     _non_negative_int(
         bounds.provider_budget_minor_units, f"{label} provider_budget_minor_units"
     )
@@ -202,7 +206,10 @@ def validate_bounds(bounds: AuthorityBounds, *, label: str) -> None:
     ]
     if conflicts:
         raise ContractError(f"{label} scope intersects forbidden scope: {conflicts}")
-    if Capability.PROVIDER_COST in bounds.capabilities and bounds.provider_call_limit < 1:
+    if (
+        Capability.PROVIDER_COST in bounds.capabilities
+        and bounds.provider_call_limit < 1
+    ):
         raise ContractError(f"{label} provider_cost requires a positive call limit")
 
 
@@ -221,7 +228,9 @@ def validate_child_bounds(
     ):
         uncovered = [item for item in requested if not scope_allowed(allowed, item)]
         if uncovered:
-            raise ContractError(f"{label} {scope_label} exceeds parent authority: {uncovered}")
+            raise ContractError(
+                f"{label} {scope_label} exceeds parent authority: {uncovered}"
+            )
     inherited_conflicts = [
         (scope, denied)
         for scope in (*child.read_scope, *child.write_scope)
@@ -248,7 +257,9 @@ def validate_child_bounds(
             f"{label} runtime surfaces exceed parent authority: {sorted(extra_surfaces)}"
         )
     missing_surfaces = [
-        key for key, value in parent_surfaces.items() if child_surfaces.get(key) != value
+        key
+        for key, value in parent_surfaces.items()
+        if child_surfaces.get(key) != value
     ]
     if missing_surfaces:
         raise ContractError(
@@ -281,7 +292,13 @@ class ProjectSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ProjectSpec":
-        fields = {"schema_version", "project_id", "version", "target_outcome", "authority"}
+        fields = {
+            "schema_version",
+            "project_id",
+            "version",
+            "target_outcome",
+            "authority",
+        }
         _strict_keys(data, fields, fields, "project_spec")
         if data["schema_version"] != "companyos.project-spec.v1":
             raise ContractError("unsupported project_spec schema_version")
@@ -304,7 +321,9 @@ class ProjectSpec:
         }
 
     def reference(self) -> AuthorityRef:
-        return AuthorityRef("project", self.project_id, self.version, content_hash(self.to_dict()))
+        return AuthorityRef(
+            "project", self.project_id, self.version, content_hash(self.to_dict())
+        )
 
 
 @dataclass(frozen=True)
@@ -322,8 +341,15 @@ class ProgramSpec:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ProgramSpec":
         fields = {
-            "schema_version", "program_id", "version", "project_ref", "objective",
-            "state", "dependency_refs", "wave", "authority",
+            "schema_version",
+            "program_id",
+            "version",
+            "project_ref",
+            "objective",
+            "state",
+            "dependency_refs",
+            "wave",
+            "authority",
         }
         _strict_keys(data, fields, fields, "program_spec")
         if data["schema_version"] != "companyos.program-spec.v1":
@@ -333,13 +359,17 @@ class ProgramSpec:
         if not isinstance(data["dependency_refs"], list) or not all(
             isinstance(item, Mapping) for item in data["dependency_refs"]
         ):
-            raise ContractError("program_spec.dependency_refs must be a list of objects")
+            raise ContractError(
+                "program_spec.dependency_refs must be a list of objects"
+            )
         if not isinstance(data["authority"], Mapping):
             raise ContractError("program_spec.authority must be an object")
         project_ref = AuthorityRef.from_dict(data["project_ref"])
         if project_ref.kind != "project":
             raise ContractError("program_spec.project_ref must reference a project")
-        dependencies = tuple(AuthorityRef.from_dict(item) for item in data["dependency_refs"])
+        dependencies = tuple(
+            AuthorityRef.from_dict(item) for item in data["dependency_refs"]
+        )
         if any(item.kind != "program" for item in dependencies):
             raise ContractError("program dependencies must reference programs")
         if len(dependencies) != len(set(dependencies)):
@@ -377,7 +407,9 @@ class ProgramSpec:
         }
 
     def reference(self) -> AuthorityRef:
-        return AuthorityRef("program", self.program_id, self.version, content_hash(self.to_dict()))
+        return AuthorityRef(
+            "program", self.program_id, self.version, content_hash(self.to_dict())
+        )
 
 
 @dataclass(frozen=True)
@@ -392,14 +424,23 @@ class CompiledGoalAuthority:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CompiledGoalAuthority":
         fields = {
-            "schema_version", "version", "project_ref", "program_ref",
-            "required_decision_gates", "goal_spec",
+            "schema_version",
+            "version",
+            "project_ref",
+            "program_ref",
+            "required_decision_gates",
+            "goal_spec",
         }
         _strict_keys(data, fields, fields, "compiled_goal_authority")
         if data["schema_version"] != "companyos.compiled-goal-authority.v1":
             raise ContractError("unsupported compiled_goal_authority schema_version")
-        if not all(isinstance(data[name], Mapping) for name in ("project_ref", "program_ref", "goal_spec")):
-            raise ContractError("compiled_goal_authority refs and goal_spec must be objects")
+        if not all(
+            isinstance(data[name], Mapping)
+            for name in ("project_ref", "program_ref", "goal_spec")
+        ):
+            raise ContractError(
+                "compiled_goal_authority refs and goal_spec must be objects"
+            )
         project_ref = AuthorityRef.from_dict(data["project_ref"])
         program_ref = AuthorityRef.from_dict(data["program_ref"])
         if project_ref.kind != "project" or program_ref.kind != "program":
@@ -425,7 +466,9 @@ class CompiledGoalAuthority:
         }
 
     def reference(self) -> AuthorityRef:
-        return AuthorityRef("goal", self.goal_spec.goal_id, self.version, content_hash(self.to_dict()))
+        return AuthorityRef(
+            "goal", self.goal_spec.goal_id, self.version, content_hash(self.to_dict())
+        )
 
 
 @dataclass(frozen=True)
@@ -441,17 +484,23 @@ class DecisionGateContract:
         fields = {"gate_id", "capability", "action", "resource", "request_digest"}
         _strict_keys(data, fields, fields, "decision_gate_contract")
         try:
-            capability = Capability(_text(data["capability"], "decision gate capability"))
+            capability = Capability(
+                _text(data["capability"], "decision gate capability")
+            )
         except ValueError as exc:
             raise ContractError(str(exc)) from exc
         resource = _text(data["resource"], "decision gate resource")
         if "://" not in resource or "*" in resource:
-            raise ContractError("decision gate resource must be an exact typed resource")
+            raise ContractError(
+                "decision gate resource must be an exact typed resource"
+            )
         request_digest = _text(data["request_digest"], "decision gate request_digest")
         if len(request_digest) != 64 or any(
             character not in "0123456789abcdef" for character in request_digest
         ):
-            raise ContractError("decision gate request_digest must be lowercase SHA-256 hex")
+            raise ContractError(
+                "decision gate request_digest must be lowercase SHA-256 hex"
+            )
         return cls(
             gate_id=_text(data["gate_id"], "decision gate id"),
             capability=capability,
@@ -534,9 +583,17 @@ class CompiledTaskAuthority:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CompiledTaskAuthority":
         fields = {
-            "schema_version", "version", "project_ref", "program_ref", "goal_ref",
-            "required_decision_gates", "provider_budget_minor_units",
-            "decision_gate_contracts", "provider_call_limit", "budget_currency", "task_spec",
+            "schema_version",
+            "version",
+            "project_ref",
+            "program_ref",
+            "goal_ref",
+            "required_decision_gates",
+            "provider_budget_minor_units",
+            "decision_gate_contracts",
+            "provider_call_limit",
+            "budget_currency",
+            "task_spec",
         }
         _strict_keys(data, fields, fields, "compiled_task_authority")
         if data["schema_version"] != "companyos.compiled-task-authority.v1":
@@ -545,12 +602,16 @@ class CompiledTaskAuthority:
             isinstance(data[name], Mapping)
             for name in ("project_ref", "program_ref", "goal_ref", "task_spec")
         ):
-            raise ContractError("compiled_task_authority refs and task_spec must be objects")
+            raise ContractError(
+                "compiled_task_authority refs and task_spec must be objects"
+            )
         project_ref = AuthorityRef.from_dict(data["project_ref"])
         program_ref = AuthorityRef.from_dict(data["program_ref"])
         goal_ref = AuthorityRef.from_dict(data["goal_ref"])
         if (project_ref.kind, program_ref.kind, goal_ref.kind) != (
-            "project", "program", "goal"
+            "project",
+            "program",
+            "goal",
         ):
             raise ContractError("compiled_task_authority has invalid parent ref kinds")
         currency = _text(data["budget_currency"], "task budget_currency").upper()
@@ -584,7 +645,9 @@ class CompiledTaskAuthority:
         if not isinstance(data["decision_gate_contracts"], list):
             raise ContractError("decision_gate_contracts must be a list")
         gate_ids = tuple(item.gate_id for item in result.decision_gate_contracts)
-        if gate_ids != result.required_decision_gates or len(gate_ids) != len(set(gate_ids)):
+        if gate_ids != result.required_decision_gates or len(gate_ids) != len(
+            set(gate_ids)
+        ):
             raise ContractError(
                 "decision_gate_contracts must exactly match required_decision_gates order"
             )

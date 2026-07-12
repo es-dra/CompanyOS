@@ -101,7 +101,9 @@ def project_packet(project_id: str = "afs") -> dict[str, object]:
     }
 
 
-def program_packet(project: ProjectSpec, program_id: str = "afs-core") -> dict[str, object]:
+def program_packet(
+    project: ProjectSpec, program_id: str = "afs-core"
+) -> dict[str, object]:
     return {
         "schema_version": "companyos.program-spec.v1",
         "program_id": program_id,
@@ -200,7 +202,9 @@ def forged_gate_authority(authority: CompiledTaskAuthority) -> dict[str, Any]:
 class AuthoritySpineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.project = compile_project(project_packet())
-        self.program = compile_program(program_packet(self.project), project=self.project)
+        self.program = compile_program(
+            program_packet(self.project), project=self.project
+        )
         self.goal, _ = compile_goal_authority(
             goal_packet(), project=self.project, program=self.program
         )
@@ -244,14 +248,20 @@ class AuthoritySpineTests(unittest.TestCase):
 
     def test_program_cannot_widen_any_authority_dimension(self) -> None:
         cases = (
-            ("capabilities", authority(capabilities=["read_local", "server_write"]), "capabilities"),
+            (
+                "capabilities",
+                authority(capabilities=["read_local", "server_write"]),
+                "capabilities",
+            ),
             ("read", authority(read_scope=["repo://another/**"]), "read_scope"),
             ("write", authority(write_scope=["repo://afs/release/**"]), "write_scope"),
             ("budget", authority(budget=10_001), "budget"),
             ("calls", authority(calls=11), "call limit"),
             (
                 "surface",
-                authority(surfaces=[SURFACE, {**SURFACE, "surface_key": "server:prod"}]),
+                authority(
+                    surfaces=[SURFACE, {**SURFACE, "surface_key": "server:prod"}]
+                ),
                 "runtime surfaces",
             ),
             ("evaluator", authority(evaluator=False), "evaluator"),
@@ -330,15 +340,16 @@ class AuthoritySpineTests(unittest.TestCase):
         widened = goal_packet()
         widened["write_scope"] = ["repo://afs/worktrees/other/**"]
         with self.assertRaisesRegex(ContractError, "write_scope"):
-            compile_goal_authority(
-                widened, project=self.project, program=self.program
-            )
+            compile_goal_authority(widened, project=self.project, program=self.program)
 
     def test_forged_program_wrapper_is_revalidated_before_goal_compile(self) -> None:
         forged_data = self.program.to_dict()
         forged_authority = dict(forged_data["authority"])
         forged_authority["capabilities"] = [
-            "read_local", "write_local", "provider_cost", "server_write"
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "server_write",
         ]
         forged_authority["write_scope"] = ["server://production/runtime/**"]
         forged_authority["forbidden_scope"] = []
@@ -346,9 +357,7 @@ class AuthoritySpineTests(unittest.TestCase):
         forged = ProgramSpec.from_dict(forged_data)
         self.assertEqual(forged.project_ref, self.project.reference())
         with self.assertRaisesRegex(ContractError, "exceed|write_scope"):
-            compile_goal_authority(
-                goal_packet(), project=self.project, program=forged
-            )
+            compile_goal_authority(goal_packet(), project=self.project, program=forged)
 
     def test_task_cannot_bypass_goal_or_widen_budget(self) -> None:
         with self.assertRaisesRegex(ContractError, "goal_id"):
@@ -372,7 +381,10 @@ class AuthoritySpineTests(unittest.TestCase):
         forged_data = self.goal.to_dict()
         forged_goal = dict(forged_data["goal_spec"])
         forged_goal["allowed_capabilities"] = [
-            "read_local", "write_local", "provider_cost", "server_write"
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "server_write",
         ]
         forged_goal["write_scope"] = ["server://production/runtime/**"]
         forged_goal["forbidden_scope"] = []
@@ -441,7 +453,9 @@ class AuthoritySpineTests(unittest.TestCase):
             self.goal.required_decision_gates,
             self.program.authority.required_decision_gates,
         )
-        self.assertEqual(task.required_decision_gates, self.goal.required_decision_gates)
+        self.assertEqual(
+            task.required_decision_gates, self.goal.required_decision_gates
+        )
         forged_data = self.goal.to_dict()
         forged_data["required_decision_gates"] = ["provider"]
         forged = CompiledGoalAuthority.from_dict(forged_data)
@@ -456,7 +470,10 @@ class AuthoritySpineTests(unittest.TestCase):
     def test_task_compile_rejects_unsatisfiable_decision_gates(self) -> None:
         missing_release = task_packet()
         missing_release["capabilities"] = [
-            "read_local", "write_local", "provider_cost", "repo_remote"
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "repo_remote",
         ]
         with self.assertRaisesRegex(ContractError, "release requires capability"):
             compile_task_authority(
@@ -478,9 +495,24 @@ class AuthoritySpineTests(unittest.TestCase):
             )
         for label, write_scope, message in (
             ("empty", [], "provider.*provider://"),
-            ("provider", ["repo://afs/worktrees/core/api/path.py", "release://afs/core/v1"], "provider.*provider://"),
-            ("merge", ["provider://afs/image/keyframes/model", "release://afs/core/v1"], "merge.*repo://"),
-            ("release", ["provider://afs/image/keyframes/model", "repo://afs/worktrees/core/api/path.py"], "release.*release://"),
+            (
+                "provider",
+                ["repo://afs/worktrees/core/api/path.py", "release://afs/core/v1"],
+                "provider.*provider://",
+            ),
+            (
+                "merge",
+                ["provider://afs/image/keyframes/model", "release://afs/core/v1"],
+                "merge.*repo://",
+            ),
+            (
+                "release",
+                [
+                    "provider://afs/image/keyframes/model",
+                    "repo://afs/worktrees/core/api/path.py",
+                ],
+                "release.*release://",
+            ),
         ):
             with self.subTest(label=label):
                 incompatible = task_packet()
@@ -534,7 +566,9 @@ class AuthoritySpineSchemaTests(unittest.TestCase):
     def test_schema_accepts_compiler_outputs_and_rejects_unknowns(self) -> None:
         project = compile_project(project_packet())
         program = compile_program(program_packet(project), project=project)
-        goal, _ = compile_goal_authority(goal_packet(), project=project, program=program)
+        goal, _ = compile_goal_authority(
+            goal_packet(), project=project, program=program
+        )
         task, _ = compile_task_authority(
             task_packet(),
             project=project,
@@ -561,7 +595,9 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.store = SQLiteStore(Path(self.temp.name) / "runtime.db")
         self.project = compile_project(project_packet())
-        self.program = compile_program(program_packet(self.project), project=self.project)
+        self.program = compile_program(
+            program_packet(self.project), project=self.project
+        )
         self.kernel = RuntimeKernel(
             self.store,
             authority_spines={"afs": (self.project, self.program)},
@@ -912,7 +948,9 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 malformed_projects, malformed_programs
             )
 
-    def test_decision_approvals_succeed_end_to_end_and_missing_binding_fails(self) -> None:
+    def test_decision_approvals_succeed_end_to_end_and_missing_binding_fails(
+        self,
+    ) -> None:
         run_id = self._create_bound_running_task()
         policy = PolicyEngine(self.store)
         gate_contracts = {
