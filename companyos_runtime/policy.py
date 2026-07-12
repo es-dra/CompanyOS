@@ -187,6 +187,34 @@ def _required_decision_gates_satisfied(
     return True
 
 
+def _decision_gates_for_request(
+    connection: Any,
+    task_id: str,
+    *,
+    capability: str,
+    action: str,
+    resource: str,
+) -> tuple[str, ...]:
+    try:
+        validated = _validated_task_authority_binding(connection, task_id)
+    except AuthorizationError:
+        return ()
+    if validated is None:
+        return ()
+    authority, _ = validated
+    request_target = (capability, action, resource)
+    return tuple(
+        contract.gate_id
+        for contract in authority.decision_gate_contracts
+        if (
+            contract.capability.value,
+            contract.action,
+            contract.resource,
+        )
+        == request_target
+    )
+
+
 # Every capability has one explicit TaskSpec scope source and a closed action
 # vocabulary. Network is the only dual-mode capability: its exact action
 # determines whether read_scope or write_scope is authoritative. Adding a new
@@ -960,15 +988,13 @@ class PolicyEngine:
             ).fetchone()[0]
             if active != 1:
                 raise AuthorizationError(f"approval has expired: {approval_id}")
-            matching_gate = next(
-                (
-                    gate
-                    for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items()
-                    if gate_capability == capability_value
-                ),
-                None,
+            required_gates = _decision_gates_for_request(
+                connection,
+                approval["task_id"],
+                capability=capability_value,
+                action=action,
+                resource=resource,
             )
-            required_gates = (matching_gate,) if matching_gate is not None else ()
             if not _required_decision_gates_satisfied(
                 connection,
                 approval["task_id"],
@@ -1498,15 +1524,13 @@ class PolicyEngine:
             self._assert_task_lifecycle(
                 task_scope, capability=capability_value, phase="consume"
             )
-            matching_gate = next(
-                (
-                    gate
-                    for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items()
-                    if gate_capability == capability_value
-                ),
-                None,
+            required_gates = _decision_gates_for_request(
+                connection,
+                task_id,
+                capability=capability_value,
+                action=action,
+                resource=resource,
             )
-            required_gates = (matching_gate,) if matching_gate is not None else ()
             if not _required_decision_gates_satisfied(
                 connection,
                 task_id,
