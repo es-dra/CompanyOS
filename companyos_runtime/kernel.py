@@ -117,6 +117,63 @@ class RuntimeKernel:
 
     def initialize(self) -> None:
         self.store.initialize()
+        with self.store.transaction(immediate=True) as connection:
+            for project_id, (project, program) in self._authority_spines.items():
+                existing = connection.execute(
+                    "SELECT * FROM adopted_projects WHERE project_id = ?", (project_id,)
+                ).fetchone()
+                project_json = canonical_json(project.to_dict())
+                program_json = canonical_json(program.to_dict())
+                graph_digest = content_hash([program.reference().to_dict()])
+                if existing is not None:
+                    if (
+                        existing["digest"] != project.reference().digest
+                        or existing["current_program_id"] != program.program_id
+                    ):
+                        raise ContractError("persisted adopted Project authority conflicts with configuration")
+                    current = connection.execute(
+                        "SELECT digest, state, graph_digest FROM adopted_programs WHERE program_id = ?",
+                        (program.program_id,),
+                    ).fetchone()
+                    if current is None or (
+                        current["digest"], current["state"], current["graph_digest"]
+                    ) != (program.reference().digest, program.state.value, graph_digest):
+                        raise ContractError("persisted current Program authority conflicts with configuration")
+                    continue
+                now = utc_now()
+                connection.execute(
+                    "INSERT INTO adopted_projects(project_id, version, digest, spec_json, current_program_id, adopted_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (project_id, project.version, project.reference().digest, project_json, program.program_id, now),
+                )
+                connection.execute(
+                    "INSERT INTO adopted_programs(program_id, project_id, version, digest, state, graph_digest, spec_json, adopted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (program.program_id, project_id, program.version, program.reference().digest, program.state.value, graph_digest, program_json, now),
+                )
+
+    def _persisted_authority_spine(
+        self, project_id: str
+    ) -> tuple[ProjectSpec, ProgramSpec] | None:
+        with self.store.transaction() as connection:
+            project_row = connection.execute(
+                "SELECT * FROM adopted_projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if project_row is None:
+                return None
+            program_row = connection.execute(
+                "SELECT * FROM adopted_programs WHERE project_id = ? AND program_id = ?",
+                (project_id, project_row["current_program_id"]),
+            ).fetchone()
+            if program_row is None:
+                raise ContractError("adopted Project current Program projection is missing")
+            project = ProjectSpec.from_dict(json.loads(project_row["spec_json"]))
+            program = ProgramSpec.from_dict(json.loads(program_row["spec_json"]))
+            if (
+                project.reference().digest != project_row["digest"]
+                or program.reference().digest != program_row["digest"]
+                or program.state.value != program_row["state"]
+            ):
+                raise ContractError("persisted authority registry digest/state mismatch")
+            return project, program
 
     @staticmethod
     def _command_id() -> str:
@@ -216,7 +273,7 @@ class RuntimeKernel:
         idempotency_key = self._command_text(idempotency_key, "idempotency_key")
         actor_id = self._actor_id(actor, {Role.OWNER})
         spec = self._canonical_goal_spec(spec)
-        spine = self._authority_spines.get(project_id)
+        spine = self._persisted_authority_spine(project_id)
         canonical_authority: CompiledGoalAuthority | None = None
         if spine is not None:
             if compiled_authority is None:
@@ -297,6 +354,23 @@ class RuntimeKernel:
                 event_id=event["event_id"],
             )
             if canonical_authority is not None:
+                binding_event = self.store.append_event(
+                    connection,
+                    aggregate_type="goal_authority",
+                    aggregate_id=spec.goal_id,
+                    expected_version=0,
+                    project_id=project_id,
+                    event_type="goal_authority_bound",
+                    actor=actor_id,
+                    command_id=self._command_id(),
+                    correlation_id=spec.goal_id,
+                    policy_version=self.policy_version,
+                    payload=canonical_authority.to_dict(),
+                )
+                connection.execute(
+                    "INSERT INTO goal_authority_bindings(goal_id, project_id, program_id, authority_digest, authority_json, source_event_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (spec.goal_id, project_id, canonical_authority.program_ref.object_id, content_hash(canonical_authority.to_dict()), canonical_json(canonical_authority.to_dict()), binding_event["event_id"]),
+                )
                 self._authority_goal_bindings[spec.goal_id] = canonical_authority
             return result
 
@@ -400,10 +474,20 @@ class RuntimeKernel:
             run_id = self._command_text(run_id, "run_id")
         actor_id = self._actor_id(actor, {Role.OWNER, Role.SYSTEM})
         spec = self._canonical_task_spec(spec)
-        spine = self._authority_spines.get(project_id)
+        spine = self._persisted_authority_spine(project_id)
         canonical_task_authority: CompiledTaskAuthority | None = None
         if spine is not None:
             goal_authority = self._authority_goal_bindings.get(spec.goal_id)
+            if goal_authority is None:
+                with self.store.transaction() as connection:
+                    row = connection.execute(
+                        "SELECT authority_json, authority_digest FROM goal_authority_bindings WHERE goal_id = ? AND project_id = ?",
+                        (spec.goal_id, project_id),
+                    ).fetchone()
+                if row is not None:
+                    goal_authority = CompiledGoalAuthority.from_dict(json.loads(row["authority_json"]))
+                    if content_hash(goal_authority.to_dict()) != row["authority_digest"]:
+                        raise ContractError("persisted Goal authority binding digest mismatch")
             if goal_authority is None:
                 raise ContractError(
                     "authority-enabled goal binding is unavailable; recreate the "
@@ -515,6 +599,25 @@ class RuntimeKernel:
                 result=result,
                 event_id=event["event_id"],
             )
+            if canonical_task_authority is not None:
+                binding_event = self.store.append_event(
+                    connection,
+                    aggregate_type="task_authority",
+                    aggregate_id=spec.task_id,
+                    expected_version=0,
+                    project_id=project_id,
+                    task_id=spec.task_id,
+                    event_type="task_authority_bound",
+                    actor=actor_id,
+                    command_id=self._command_id(),
+                    correlation_id=run_id or spec.goal_id,
+                    policy_version=self.policy_version,
+                    payload=canonical_task_authority.to_dict(),
+                )
+                connection.execute(
+                    "INSERT INTO task_authority_bindings(task_id, project_id, program_id, goal_id, authority_digest, authority_json, provider_budget_minor_units, provider_call_limit, required_decision_gates_json, source_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (spec.task_id, project_id, canonical_task_authority.program_ref.object_id, spec.goal_id, content_hash(canonical_task_authority.to_dict()), canonical_json(canonical_task_authority.to_dict()), canonical_task_authority.provider_budget_minor_units, canonical_task_authority.provider_call_limit, canonical_json(list(canonical_task_authority.required_decision_gates)), binding_event["event_id"]),
+                )
             return result
 
     def advance_loop(

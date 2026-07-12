@@ -1,6 +1,6 @@
 """SQLite schema for the single-host durable runtime implementation."""
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 DDL = r"""
 PRAGMA foreign_keys = ON;
@@ -126,6 +126,55 @@ CREATE TABLE IF NOT EXISTS goals (
     aggregate_version INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS adopted_projects (
+    project_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL CHECK (version > 0),
+    digest TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    current_program_id TEXT NOT NULL,
+    adopted_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS adopted_programs (
+    program_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    digest TEXT NOT NULL,
+    state TEXT NOT NULL,
+    graph_digest TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    adopted_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES adopted_projects(project_id)
+);
+
+CREATE TABLE IF NOT EXISTS goal_authority_bindings (
+    goal_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    program_id TEXT NOT NULL,
+    authority_digest TEXT NOT NULL,
+    authority_json TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    FOREIGN KEY (goal_id) REFERENCES goals(goal_id),
+    FOREIGN KEY (program_id) REFERENCES adopted_programs(program_id),
+    FOREIGN KEY (source_event_id) REFERENCES events(event_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_authority_bindings (
+    task_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    program_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    authority_digest TEXT NOT NULL,
+    authority_json TEXT NOT NULL,
+    provider_budget_minor_units INTEGER NOT NULL CHECK (provider_budget_minor_units >= 0),
+    provider_call_limit INTEGER NOT NULL CHECK (provider_call_limit >= 0),
+    required_decision_gates_json TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY (goal_id) REFERENCES goal_authority_bindings(goal_id),
+    FOREIGN KEY (source_event_id) REFERENCES events(event_id)
 );
 
 CREATE TABLE IF NOT EXISTS runs (

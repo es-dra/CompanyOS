@@ -17,6 +17,33 @@ from .types import Capability, GoalSpec, LoopState, TaskSpec, TaskState, content
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_DECISION_GATE_CAPABILITIES = {
+    "provider": Capability.PROVIDER_COST.value,
+    "merge": Capability.REPO_REMOTE.value,
+    "release": Capability.PUBLIC_RELEASE.value,
+}
+
+
+def _required_decision_gates_satisfied(connection: Any, task_id: str) -> bool:
+    binding = connection.execute(
+        "SELECT required_decision_gates_json FROM task_authority_bindings WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    if binding is None:
+        return True
+    gates = json.loads(binding["required_decision_gates_json"])
+    for gate in gates:
+        capability = _DECISION_GATE_CAPABILITIES.get(gate)
+        clause = "capability = ?" if capability is not None else "action = ?"
+        value = capability if capability is not None else gate
+        approved = connection.execute(
+            f"SELECT 1 FROM approvals WHERE task_id = ? AND {clause} "
+            "AND decision = 'approved' AND julianday(expires_at) > julianday('now') LIMIT 1",
+            (task_id, value),
+        ).fetchone()
+        if approved is None:
+            return False
+    return True
 
 # Every capability has one explicit TaskSpec scope source and a closed action
 # vocabulary. Network is the only dual-mode capability: its exact action
@@ -760,6 +787,12 @@ class PolicyEngine:
             ).fetchone()[0]
             if active != 1:
                 raise AuthorizationError(f"approval has expired: {approval_id}")
+            if not _required_decision_gates_satisfied(
+                connection, approval["task_id"]
+            ):
+                raise AuthorizationError(
+                    "compiled Task required decision gates are not satisfied"
+                )
 
             task_scope = self._assert_task_scope(
                 connection,
@@ -807,6 +840,31 @@ class PolicyEngine:
                     raise AuthorizationError(
                         "goal provider call limit reservation would be exceeded"
                     )
+                task_authority = connection.execute(
+                    "SELECT provider_budget_minor_units, provider_call_limit "
+                    "FROM task_authority_bindings WHERE task_id = ?",
+                    (approval["task_id"],),
+                ).fetchone()
+                if task_authority is not None:
+                    task_reserved = connection.execute(
+                        "SELECT COALESCE(SUM(cost_limit), 0) AS cost, "
+                        "COALESCE(SUM(max_uses), 0) AS calls FROM capability_grants "
+                        "WHERE task_id = ? AND capability = ? AND revoked_at IS NULL "
+                        "AND julianday(expires_at) > julianday('now')",
+                        (approval["task_id"], Capability.PROVIDER_COST.value),
+                    ).fetchone()
+                    if int(task_reserved["cost"]) + cost_limit > int(
+                        task_authority["provider_budget_minor_units"]
+                    ):
+                        raise AuthorizationError(
+                            "compiled Task provider budget reservation would be exceeded"
+                        )
+                    if int(task_reserved["calls"]) + max_uses > int(
+                        task_authority["provider_call_limit"]
+                    ):
+                        raise AuthorizationError(
+                            "compiled Task provider call limit reservation would be exceeded"
+                        )
             if required_fence is not None:
                 self._assert_current_lease(
                     connection,
@@ -1256,6 +1314,10 @@ class PolicyEngine:
             self._assert_task_lifecycle(
                 task_scope, capability=capability_value, phase="consume"
             )
+            if not _required_decision_gates_satisfied(connection, task_id):
+                raise AuthorizationError(
+                    "compiled Task required decision gates are not satisfied"
+                )
             if Role.WORKER in live_roles:
                 self._assert_current_task_claim(
                     connection,
@@ -1326,6 +1388,28 @@ class PolicyEngine:
                 raise AuthorizationError(f"grant use limit exhausted: {grant_id}")
             if int(grant["cost_used"]) + cost > int(grant["cost_limit"]):
                 raise AuthorizationError(f"grant cost limit exceeded: {grant_id}")
+            if capability_value == Capability.PROVIDER_COST.value:
+                task_authority = connection.execute(
+                    "SELECT provider_budget_minor_units, provider_call_limit "
+                    "FROM task_authority_bindings WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                if task_authority is not None:
+                    consumed = connection.execute(
+                        "SELECT COALESCE(SUM(u.cost), 0) AS cost, COUNT(*) AS calls "
+                        "FROM capability_usage AS u JOIN capability_grants AS g "
+                        "ON g.grant_id = u.grant_id WHERE g.task_id = ? "
+                        "AND g.capability = ?",
+                        (task_id, Capability.PROVIDER_COST.value),
+                    ).fetchone()
+                    if int(consumed["cost"]) + cost > int(
+                        task_authority["provider_budget_minor_units"]
+                    ):
+                        raise AuthorizationError("compiled Task provider budget exceeded")
+                    if int(consumed["calls"]) + 1 > int(
+                        task_authority["provider_call_limit"]
+                    ):
+                        raise AuthorizationError("compiled Task provider call limit exceeded")
 
             used_at = self._now(connection)
             connection.execute(
