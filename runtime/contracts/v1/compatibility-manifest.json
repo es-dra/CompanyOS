@@ -12,7 +12,7 @@
     "wire_schema": {
       "path": "runtime/contracts/v1/runtime-contracts.schema.json",
       "digest_mode": "canonical_text_sha256",
-      "sha256": "3c3dc934dba68a60910c74116374258f1b13b2c3f0df042c9dcd883bd4be648a"
+      "sha256": "c151a19568b619a6d4b6a127625613bcac910a77c3b7df928018863076135771"
     },
     "authoring_schema": {
       "path": "runtime/contracts/v1/authoring-contracts.schema.json",

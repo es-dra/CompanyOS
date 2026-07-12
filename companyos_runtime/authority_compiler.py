@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 from .authority import (
     AuthorityBounds,
@@ -17,6 +17,14 @@ from .authority import (
 from .compiler import CompilationResult, compile_goal, compile_task
 from .errors import ContractError
 from .types import GoalSpec
+
+
+class CurrentProgramStateProvider(Protocol):
+    """Trusted application boundary for active/terminal Program versions."""
+
+    def current_program(
+        self, *, project_ref: object, program_id: str
+    ) -> ProgramSpec | None: ...
 
 
 def _goal_bounds(goal: GoalSpec, decision_gates: tuple[str, ...]) -> AuthorityBounds:
@@ -38,14 +46,75 @@ def compile_project(data: Mapping[str, Any]) -> ProjectSpec:
     return ProjectSpec.from_dict(data)
 
 
-def compile_program(data: Mapping[str, Any], *, project: ProjectSpec) -> ProgramSpec:
+def compile_program(
+    data: Mapping[str, Any],
+    *,
+    project: ProjectSpec,
+    program_graph: Sequence[ProgramSpec] | None = None,
+    current_state_provider: CurrentProgramStateProvider | None = None,
+) -> ProgramSpec:
+    canonical_project = ProjectSpec.from_dict(project.to_dict())
     program = ProgramSpec.from_dict(data)
-    if program.project_ref != project.reference():
+    if program.project_ref != canonical_project.reference():
         raise ContractError(
             "program project_ref does not match exact ProjectSpec version/digest"
         )
-    validate_child_bounds(project.authority, program.authority, label="program")
+    validate_child_bounds(
+        canonical_project.authority, program.authority, label="program"
+    )
+    if program.state is not program.state.COMPILED:
+        if current_state_provider is None:
+            raise ContractError(
+                "non-compiled Program requires a trusted current-state provider"
+            )
+        current = current_state_provider.current_program(
+            project_ref=canonical_project.reference(), program_id=program.program_id
+        )
+        if current is None or ProgramSpec.from_dict(current.to_dict()).reference() != program.reference():
+            raise ContractError("Program is not the provider-verified current version")
+    if program.dependency_refs:
+        if program_graph is None:
+            raise ContractError("Program dependencies require a complete graph proof")
+        canonical_graph = tuple(ProgramSpec.from_dict(item.to_dict()) for item in program_graph)
+        if program.reference() not in {item.reference() for item in canonical_graph}:
+            raise ContractError("Program graph proof does not contain the exact Program version")
+        validate_program_graph(canonical_project, canonical_graph)
     return program
+
+
+def validate_goal_authority(
+    authority: CompiledGoalAuthority,
+    *,
+    project: ProjectSpec,
+    program: ProgramSpec,
+    program_graph: Sequence[ProgramSpec] | None = None,
+    current_state_provider: CurrentProgramStateProvider | None = None,
+) -> CompiledGoalAuthority:
+    canonical_project = ProjectSpec.from_dict(project.to_dict())
+    canonical_program = compile_program(
+        program.to_dict(),
+        project=canonical_project,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    )
+    canonical = CompiledGoalAuthority.from_dict(authority.to_dict())
+    if canonical_program.state.terminal:
+        raise ContractError("terminal Program cannot accept a new Goal")
+    if canonical.project_ref != canonical_project.reference():
+        raise ContractError("Goal cannot bypass Project authority")
+    if canonical.program_ref != canonical_program.reference():
+        raise ContractError("Goal cannot bypass Program authority")
+    if canonical.required_decision_gates != canonical_program.authority.required_decision_gates:
+        raise ContractError("Goal decision gates do not match Program authority")
+    validate_child_bounds(
+        canonical_program.authority,
+        _goal_bounds(
+            canonical.goal_spec,
+            canonical_program.authority.required_decision_gates,
+        ),
+        label="goal",
+    )
+    return canonical
 
 
 def validate_program_graph(project: ProjectSpec, programs: Sequence[ProgramSpec]) -> None:
@@ -89,26 +158,85 @@ def compile_goal_authority(
     project: ProjectSpec,
     program: ProgramSpec,
     version: int = 1,
+    program_graph: Sequence[ProgramSpec] | None = None,
+    current_state_provider: CurrentProgramStateProvider | None = None,
 ) -> tuple[CompiledGoalAuthority, CompilationResult]:
-    if program.state.terminal:
-        raise ContractError("terminal Program cannot accept a new Goal")
-    if program.project_ref != project.reference():
-        raise ContractError("Goal cannot bypass Program or cross project authority")
     goal, result = compile_goal(authoring)
+    candidate = CompiledGoalAuthority(
+        version=_positive_int(version, "goal authority version"),
+        project_ref=ProjectSpec.from_dict(project.to_dict()).reference(),
+        program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
+        required_decision_gates=ProgramSpec.from_dict(
+            program.to_dict()
+        ).authority.required_decision_gates,
+        goal_spec=goal,
+    )
+    return validate_goal_authority(
+        candidate,
+        project=project,
+        program=program,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    ), result
+
+
+def validate_task_authority(
+    authority: CompiledTaskAuthority,
+    *,
+    project: ProjectSpec,
+    program: ProgramSpec,
+    goal: CompiledGoalAuthority,
+    program_graph: Sequence[ProgramSpec] | None = None,
+    current_state_provider: CurrentProgramStateProvider | None = None,
+) -> CompiledTaskAuthority:
+    canonical_project = ProjectSpec.from_dict(project.to_dict())
+    canonical_program = compile_program(
+        program.to_dict(),
+        project=canonical_project,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    )
+    canonical_goal = validate_goal_authority(
+        goal,
+        project=canonical_project,
+        program=canonical_program,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    )
+    canonical = CompiledTaskAuthority.from_dict(authority.to_dict())
+    if canonical_program.state.terminal:
+        raise ContractError("terminal Program cannot accept a new Task")
+    if canonical.project_ref != canonical_project.reference():
+        raise ContractError("Task cannot cross project authority")
+    if canonical.program_ref != canonical_program.reference():
+        raise ContractError("Task cannot bypass Program authority")
+    if canonical.goal_ref != canonical_goal.reference():
+        raise ContractError("Task cannot bypass Goal authority")
+    if canonical.required_decision_gates != canonical_goal.required_decision_gates:
+        raise ContractError("Task decision gates do not match compiled Goal authority")
+    if canonical.task_spec.goal_id != canonical_goal.goal_spec.goal_id:
+        raise ContractError("Task goal_id does not match compiled Goal authority")
+    task_bounds = AuthorityBounds(
+        capabilities=canonical.task_spec.capabilities,
+        read_scope=canonical.task_spec.read_scope,
+        write_scope=canonical.task_spec.write_scope,
+        forbidden_scope=canonical.task_spec.forbidden_scope,
+        required_runtime_surfaces=canonical.task_spec.required_runtime_surfaces,
+        provider_budget_minor_units=canonical.provider_budget_minor_units,
+        provider_call_limit=canonical.provider_call_limit,
+        budget_currency=canonical.budget_currency,
+        evaluator_required=canonical.task_spec.evaluator_required,
+        required_decision_gates=canonical_program.authority.required_decision_gates,
+    )
     validate_child_bounds(
-        program.authority,
-        _goal_bounds(goal, program.authority.required_decision_gates),
-        label="goal",
-    )
-    return (
-        CompiledGoalAuthority(
-            version=_positive_int(version, "goal authority version"),
-            project_ref=project.reference(),
-            program_ref=program.reference(),
-            goal_spec=goal,
+        _goal_bounds(
+            canonical_goal.goal_spec,
+            canonical_program.authority.required_decision_gates,
         ),
-        result,
+        task_bounds,
+        label="task",
     )
+    return canonical
 
 
 def compile_task_authority(
@@ -121,15 +249,18 @@ def compile_task_authority(
     provider_call_limit: int = 0,
     budget_currency: str | None = None,
     version: int = 1,
+    program_graph: Sequence[ProgramSpec] | None = None,
+    current_state_provider: CurrentProgramStateProvider | None = None,
 ) -> tuple[CompiledTaskAuthority, CompilationResult]:
-    if program.state.terminal:
-        raise ContractError("terminal Program cannot accept a new Task")
-    if program.project_ref != project.reference() or goal.project_ref != project.reference():
-        raise ContractError("Task cannot cross project authority")
-    if goal.program_ref != program.reference():
-        raise ContractError("Task cannot bypass Program or Goal authority")
-    task, result = compile_task(authoring, goal=goal.goal_spec)
-    currency = (budget_currency or goal.goal_spec.budget_currency).upper()
+    canonical_goal = validate_goal_authority(
+        goal,
+        project=project,
+        program=program,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    )
+    task, result = compile_task(authoring, goal=canonical_goal.goal_spec)
+    currency = (budget_currency or canonical_goal.goal_spec.budget_currency).upper()
     task_bounds = AuthorityBounds(
         capabilities=task.capabilities,
         read_scope=task.read_scope,
@@ -146,21 +277,22 @@ def compile_task_authority(
         evaluator_required=task.evaluator_required,
         required_decision_gates=program.authority.required_decision_gates,
     )
-    validate_child_bounds(
-        _goal_bounds(goal.goal_spec, program.authority.required_decision_gates),
-        task_bounds,
-        label="task",
-    )
-    return (
-        CompiledTaskAuthority(
+    candidate = CompiledTaskAuthority(
             version=_positive_int(version, "task authority version"),
-            project_ref=project.reference(),
-            program_ref=program.reference(),
-            goal_ref=goal.reference(),
+            project_ref=ProjectSpec.from_dict(project.to_dict()).reference(),
+            program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
+            goal_ref=canonical_goal.reference(),
+            required_decision_gates=canonical_goal.required_decision_gates,
             provider_budget_minor_units=task_bounds.provider_budget_minor_units,
             provider_call_limit=task_bounds.provider_call_limit,
             budget_currency=task_bounds.budget_currency,
             task_spec=task,
-        ),
-        result,
     )
+    return validate_task_authority(
+        candidate,
+        project=project,
+        program=program,
+        goal=canonical_goal,
+        program_graph=program_graph,
+        current_state_provider=current_state_provider,
+    ), result

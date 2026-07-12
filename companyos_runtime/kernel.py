@@ -7,6 +7,17 @@ import sqlite3
 import uuid
 from typing import Any, Mapping
 
+from .authority import (
+    CompiledGoalAuthority,
+    CompiledTaskAuthority,
+    ProgramSpec,
+    ProjectSpec,
+)
+from .authority_compiler import (
+    compile_program,
+    validate_goal_authority,
+    validate_task_authority,
+)
 from .errors import ContractError, NotFoundError, TransitionError
 from .gates import GuardResolver
 from .identity import IdentityManager, Role, VerifiedPrincipal
@@ -45,6 +56,9 @@ class RuntimeKernel:
         *,
         policy_version: str = "companyos-policy-v1",
         identity: IdentityManager | None = None,
+        authority_spines: Mapping[
+            str, tuple[ProjectSpec, ProgramSpec]
+        ] | None = None,
     ):
         self.store = store
         self.__command_authority = store._bind_core_command_authority(
@@ -53,6 +67,23 @@ class RuntimeKernel:
         self.policy_version = policy_version
         self.guards = GuardResolver()
         self.identity = identity or IdentityManager(store)
+        self._authority_spines: dict[str, tuple[ProjectSpec, ProgramSpec]] = {}
+        self._authority_goal_bindings: dict[str, CompiledGoalAuthority] = {}
+        for project_id, binding in (authority_spines or {}).items():
+            if (
+                not isinstance(binding, tuple)
+                or len(binding) != 2
+                or type(binding[0]) is not ProjectSpec
+                or type(binding[1]) is not ProgramSpec
+            ):
+                raise ContractError(
+                    "authority_spines values must be exact (ProjectSpec, ProgramSpec) tuples"
+                )
+            project = ProjectSpec.from_dict(binding[0].to_dict())
+            if project_id != project.project_id:
+                raise ContractError("authority_spines key must match ProjectSpec.project_id")
+            program = compile_program(binding[1].to_dict(), project=project)
+            self._authority_spines[project_id] = (project, program)
 
     def _actor_id(self, actor: VerifiedPrincipal, allowed_roles: set[Role]) -> str:
         principal = self.identity.verify(actor)
@@ -179,11 +210,30 @@ class RuntimeKernel:
         spec: GoalSpec,
         actor: VerifiedPrincipal,
         idempotency_key: str,
+        compiled_authority: CompiledGoalAuthority | None = None,
     ) -> dict[str, Any]:
         project_id = self._command_text(project_id, "project_id")
         idempotency_key = self._command_text(idempotency_key, "idempotency_key")
         actor_id = self._actor_id(actor, {Role.OWNER})
         spec = self._canonical_goal_spec(spec)
+        spine = self._authority_spines.get(project_id)
+        canonical_authority: CompiledGoalAuthority | None = None
+        if spine is not None:
+            if compiled_authority is None:
+                raise ContractError(
+                    "authority-enabled project requires CompiledGoalAuthority"
+                )
+            canonical_authority = validate_goal_authority(
+                compiled_authority, project=spine[0], program=spine[1]
+            )
+            if canonical_authority.goal_spec != spec:
+                raise ContractError(
+                    "GoalSpec does not match the compiled authority binding"
+                )
+        elif compiled_authority is not None:
+            raise ContractError(
+                "compiled Goal authority requires an authority-enabled project"
+            )
         payload = spec.to_dict()
         digest = content_hash(payload)
         with self.store.transaction(immediate=True) as connection:
@@ -195,6 +245,8 @@ class RuntimeKernel:
                 payload_digest=digest,
             )
             if prior is not None:
+                if canonical_authority is not None:
+                    self._authority_goal_bindings[spec.goal_id] = canonical_authority
                 return prior
             if connection.execute(
                 "SELECT 1 FROM goals WHERE goal_id = ?", (spec.goal_id,)
@@ -244,6 +296,8 @@ class RuntimeKernel:
                 result=result,
                 event_id=event["event_id"],
             )
+            if canonical_authority is not None:
+                self._authority_goal_bindings[spec.goal_id] = canonical_authority
             return result
 
     def create_run(
@@ -338,6 +392,7 @@ class RuntimeKernel:
         actor: VerifiedPrincipal,
         idempotency_key: str,
         run_id: str | None = None,
+        compiled_authority: CompiledTaskAuthority | None = None,
     ) -> dict[str, Any]:
         project_id = self._command_text(project_id, "project_id")
         idempotency_key = self._command_text(idempotency_key, "idempotency_key")
@@ -345,6 +400,33 @@ class RuntimeKernel:
             run_id = self._command_text(run_id, "run_id")
         actor_id = self._actor_id(actor, {Role.OWNER, Role.SYSTEM})
         spec = self._canonical_task_spec(spec)
+        spine = self._authority_spines.get(project_id)
+        canonical_task_authority: CompiledTaskAuthority | None = None
+        if spine is not None:
+            goal_authority = self._authority_goal_bindings.get(spec.goal_id)
+            if goal_authority is None:
+                raise ContractError(
+                    "authority-enabled goal binding is unavailable; recreate the "
+                    "trusted binding before adding Tasks"
+                )
+            if compiled_authority is None:
+                raise ContractError(
+                    "authority-enabled project requires CompiledTaskAuthority"
+                )
+            canonical_task_authority = validate_task_authority(
+                compiled_authority,
+                project=spine[0],
+                program=spine[1],
+                goal=goal_authority,
+            )
+            if canonical_task_authority.task_spec != spec:
+                raise ContractError(
+                    "TaskSpec does not match the compiled authority binding"
+                )
+        elif compiled_authority is not None:
+            raise ContractError(
+                "compiled Task authority requires an authority-enabled project"
+            )
         payload = spec.to_dict() | {"run_id": run_id}
         digest = content_hash(payload)
         with self.store.transaction(immediate=True) as connection:

@@ -27,6 +27,10 @@
     { "$ref": "#/$defs/ActiveRulePromotionRecord" }
   ],
   "$defs": {
+    "AuthoritySpine": {
+      "description": "Project/Program hierarchy is exported by the adjacent authority-spine schema.",
+      "$ref": "authority-spine.schema.json"
+    },
     "NonEmptyString": {
       "type": "string",
       "minLength": 1

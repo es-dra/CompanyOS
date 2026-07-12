@@ -102,12 +102,13 @@
     "CompiledGoalAuthority": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "version", "project_ref", "program_ref", "goal_spec"],
+      "required": ["schema_version", "version", "project_ref", "program_ref", "required_decision_gates", "goal_spec"],
       "properties": {
         "schema_version": { "const": "companyos.compiled-goal-authority.v1" },
         "version": { "type": "integer", "minimum": 1 },
         "project_ref": { "$ref": "#/$defs/AuthorityRef" },
         "program_ref": { "$ref": "#/$defs/AuthorityRef" },
+        "required_decision_gates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
         "goal_spec": { "$ref": "runtime-contracts.schema.json#/$defs/GoalSpec" }
       }
     },
@@ -115,7 +116,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "schema_version", "version", "project_ref", "program_ref", "goal_ref",
+        "schema_version", "version", "project_ref", "program_ref", "goal_ref", "required_decision_gates",
         "provider_budget_minor_units", "provider_call_limit", "budget_currency", "task_spec"
       ],
       "properties": {
@@ -124,6 +125,7 @@
         "project_ref": { "$ref": "#/$defs/AuthorityRef" },
         "program_ref": { "$ref": "#/$defs/AuthorityRef" },
         "goal_ref": { "$ref": "#/$defs/AuthorityRef" },
+        "required_decision_gates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
         "provider_budget_minor_units": { "type": "integer", "minimum": 0 },
         "provider_call_limit": { "type": "integer", "minimum": 0 },
         "budget_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
