@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,10 +24,12 @@ from companyos_runtime.authority_compiler import (
     compile_task_authority,
     validate_program_graph,
 )
-from companyos_runtime.errors import ContractError, IntegrityError
+from companyos_runtime.errors import AuthorizationError, ContractError, IntegrityError
 from companyos_runtime.kernel import RuntimeKernel
+from companyos_runtime.policy import PolicyEngine, _required_decision_gates_satisfied
 from companyos_runtime.replay import ProjectionReplayer
 from companyos_runtime.store import SQLiteStore
+from companyos_runtime.types import Capability, content_hash
 from tests.identity_fixtures import IdentityFixture
 
 
@@ -52,7 +55,14 @@ def authority(
     gates: list[str] | None = None,
 ) -> dict[str, object]:
     return {
-        "capabilities": capabilities or ["read_local", "write_local", "provider_cost"],
+        "capabilities": capabilities
+        or [
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "repo_remote",
+            "public_release",
+        ],
         "read_scope": read_scope or ["repo://afs/**"],
         "write_scope": write_scope or ["repo://afs/worktrees/**"],
         "forbidden_scope": ["server://production/**"],
@@ -103,7 +113,13 @@ def goal_packet() -> dict[str, object]:
         "read_scope": ["repo://afs/src/api/**"],
         "write_scope": ["repo://afs/worktrees/core/api/**"],
         "forbidden_scope": ["server://production/**"],
-        "allowed_capabilities": ["read_local", "write_local", "provider_cost"],
+        "allowed_capabilities": [
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "repo_remote",
+            "public_release",
+        ],
         "required_runtime_surfaces": [SURFACE],
         "evaluator_required": True,
         "provider_budget_minor_units": 1_000,
@@ -120,7 +136,13 @@ def task_packet(goal_id: str = "goal-core") -> dict[str, object]:
         "expected_delta": "runtime",
         "primary_surface": "repo://afs/worktrees/core/api/path.py",
         "evidence_target": "runtime_verification",
-        "capabilities": ["read_local", "write_local", "provider_cost"],
+        "capabilities": [
+            "read_local",
+            "write_local",
+            "provider_cost",
+            "repo_remote",
+            "public_release",
+        ],
         "read_scope": ["repo://afs/src/api/path.py"],
         "write_scope": ["repo://afs/worktrees/core/api/path.py"],
         "forbidden_scope": ["server://production/**"],
@@ -376,6 +398,30 @@ class AuthoritySpineTests(unittest.TestCase):
                 goal=forged,
             )
 
+    def test_task_compile_rejects_unsatisfiable_decision_gates(self) -> None:
+        missing_release = task_packet()
+        missing_release["capabilities"] = [
+            "read_local", "write_local", "provider_cost", "repo_remote"
+        ]
+        with self.assertRaisesRegex(ContractError, "release requires capability"):
+            compile_task_authority(
+                missing_release,
+                project=self.project,
+                program=self.program,
+                goal=self.goal,
+                provider_budget_minor_units=500,
+                provider_call_limit=1,
+            )
+        with self.assertRaisesRegex(ContractError, "positive Task budget"):
+            compile_task_authority(
+                task_packet(),
+                project=self.project,
+                program=self.program,
+                goal=self.goal,
+                provider_budget_minor_units=0,
+                provider_call_limit=0,
+            )
+
 
 class AuthoritySpineSchemaTests(unittest.TestCase):
     schema: dict[str, Any]
@@ -463,6 +509,40 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def _create_bound_running_task(self) -> str:
+        self.kernel.create_goal(
+            project_id="afs",
+            spec=self.goal.goal_spec,
+            compiled_authority=self.goal,
+            actor=self.identities.owner,
+            idempotency_key="bound-goal",
+        )
+        run_id = "run-authority"
+        self.kernel.create_run(
+            project_id="afs",
+            goal_id=self.goal.goal_spec.goal_id,
+            run_id=run_id,
+            actor=self.identities.owner,
+            idempotency_key="bound-run",
+        )
+        self.kernel.add_task(
+            project_id="afs",
+            spec=self.task.task_spec,
+            compiled_authority=self.task,
+            actor=self.identities.system,
+            idempotency_key="bound-task",
+            run_id=run_id,
+        )
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE runs SET loop_state = 'running' WHERE run_id = ?", (run_id,)
+            )
+            connection.execute(
+                "UPDATE tasks SET state = 'running' WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+        return run_id
 
     def test_plain_goal_and_task_cannot_bypass_enabled_spine(self) -> None:
         with self.assertRaisesRegex(ContractError, "CompiledGoalAuthority"):
@@ -607,6 +687,249 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
             {item.reference() for item in persisted[2]},
             {item.reference() for item in graph},
         )
+
+    def test_replay_rejects_stale_parent_refs_and_forged_complete_graph(self) -> None:
+        self._create_bound_running_task()
+        replayed = ProjectionReplayer(self.store).replay()
+
+        stale_goal = self.goal.to_dict()
+        stale_goal["program_ref"] = {**stale_goal["program_ref"], "version": 999}
+        with self.assertRaisesRegex(IntegrityError, "stale parent"):
+            ProjectionReplayer._apply_goal_authority(
+                {},
+                replayed.projects,
+                replayed.programs,
+                {
+                    "aggregate_id": self.goal.goal_spec.goal_id,
+                    "event_type": "goal_authority_bound",
+                    "event_id": "stale-goal-event",
+                },
+                stale_goal,
+            )
+
+        stale_task = self.task.to_dict()
+        stale_task["goal_ref"] = {**stale_task["goal_ref"], "digest": "0" * 64}
+        with self.assertRaisesRegex(IntegrityError, "stale parent"):
+            ProjectionReplayer._apply_task_authority(
+                {},
+                replayed.goal_authorities,
+                replayed.projects,
+                replayed.programs,
+                {
+                    "aggregate_id": self.task.task_spec.task_id,
+                    "event_type": "task_authority_bound",
+                    "event_id": "stale-task-event",
+                },
+                stale_task,
+            )
+
+        forged_projects = copy.deepcopy(replayed.projects)
+        forged_programs = copy.deepcopy(replayed.programs)
+        extra_ref = {
+            "kind": "program",
+            "object_id": "nonexistent-program",
+            "version": 1,
+            "digest": "1" * 64,
+        }
+        for program in forged_programs.values():
+            program["_graph_refs"].append(extra_ref)
+            program["graph_digest"] = content_hash(program["_graph_refs"])
+        with self.assertRaisesRegex(IntegrityError, "incomplete or stale"):
+            ProjectionReplayer._validate_authority_graph(
+                forged_projects, forged_programs
+            )
+        malformed_projects = copy.deepcopy(replayed.projects)
+        malformed_programs = copy.deepcopy(replayed.programs)
+        for program in malformed_programs.values():
+            program["_graph_refs"][0]["version"] = "not-an-integer"
+            program["graph_digest"] = content_hash(program["_graph_refs"])
+        with self.assertRaisesRegex(IntegrityError, "malformed"):
+            ProjectionReplayer._validate_authority_graph(
+                malformed_projects, malformed_programs
+            )
+
+    def test_decision_approvals_succeed_end_to_end_and_missing_binding_fails(self) -> None:
+        run_id = self._create_bound_running_task()
+        policy = PolicyEngine(self.store)
+        resource = "repo://afs/worktrees/core/api/path.py"
+        approvals = (
+            (Capability.PROVIDER_COST, "generate", "provider-request"),
+            (Capability.REPO_REMOTE, "merge", "merge-request"),
+            (Capability.PUBLIC_RELEASE, "release", "release-request"),
+        )
+        recorded = []
+        for capability, action, label in approvals:
+            digest = content_hash({"decision": label})
+            recorded.append(
+                policy.record_approval(
+                    project_id="afs",
+                    goal_id=self.goal.goal_spec.goal_id,
+                    run_id=run_id,
+                    task_id=self.task.task_spec.task_id,
+                    requester=self.identities.worker,
+                    approver=self.identities.owner,
+                    capability=capability,
+                    action=action,
+                    resource=resource,
+                    request_digest=digest,
+                    policy_version="companyos-policy-v1",
+                    decision="approved",
+                    ttl_seconds=600,
+                )
+            )
+        with self.store.transaction() as connection:
+            self.assertTrue(
+                _required_decision_gates_satisfied(
+                    connection, self.task.task_spec.task_id
+                )
+            )
+        provider_digest = content_hash({"decision": "provider-request"})
+        grant_kwargs = dict(
+            approval_id=recorded[0].approval_id,
+            issuer=self.identities.owner,
+            principal=self.identities.worker,
+            capability=Capability.PROVIDER_COST,
+            action="generate",
+            resource=resource,
+            request_digest=provider_digest,
+            policy_version="companyos-policy-v1",
+            ttl_seconds=300,
+            max_uses=1,
+            cost_limit=100,
+        )
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET provider_budget_minor_units = 999 "
+                "WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+        with self.assertRaisesRegex(AuthorizationError, "decision gates"):
+            policy.issue_grant(**grant_kwargs)
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET provider_budget_minor_units = ? "
+                "WHERE task_id = ?",
+                (
+                    self.task.provider_budget_minor_units,
+                    self.task.task_spec.task_id,
+                ),
+            )
+        grant = policy.issue_grant(**grant_kwargs)
+        self.assertEqual(grant.cost_limit, 100)
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET provider_call_limit = 999 "
+                "WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+        with self.assertRaisesRegex(AuthorizationError, "decision gates"):
+            policy.consume(
+                grant.grant_id,
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                principal=self.identities.worker,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource=resource,
+                request_digest=provider_digest,
+                idempotency_key="tampered-budget-consume",
+                cost=10,
+                effect_id="effect-tampered-budget",
+            )
+
+        missing_store = SQLiteStore(Path(self.temp.name) / "missing-binding.db")
+        missing_kernel = RuntimeKernel(
+            missing_store, authority_spines={"afs": (self.project, self.program)}
+        )
+        missing_kernel.initialize()
+        missing_identities = IdentityFixture(missing_store)
+        missing_kernel.create_goal(
+            project_id="afs",
+            spec=self.goal.goal_spec,
+            compiled_authority=self.goal,
+            actor=missing_identities.owner,
+            idempotency_key="missing-goal",
+        )
+        missing_kernel.create_run(
+            project_id="afs",
+            goal_id=self.goal.goal_spec.goal_id,
+            run_id=run_id,
+            actor=missing_identities.owner,
+            idempotency_key="missing-run",
+        )
+        missing_kernel.add_task(
+            project_id="afs",
+            spec=self.task.task_spec,
+            compiled_authority=self.task,
+            actor=missing_identities.system,
+            idempotency_key="missing-task",
+            run_id=run_id,
+        )
+        with missing_store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE runs SET loop_state = 'running' WHERE run_id = ?", (run_id,)
+            )
+            connection.execute(
+                "UPDATE tasks SET state = 'running' WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+            connection.execute(
+                "DELETE FROM task_authority_bindings WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+            self.assertFalse(
+                _required_decision_gates_satisfied(
+                    connection, self.task.task_spec.task_id
+                )
+            )
+        with self.assertRaisesRegex(AuthorizationError, "binding is missing"):
+            PolicyEngine(missing_store).record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=missing_identities.worker,
+                approver=missing_identities.owner,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource=resource,
+                request_digest=provider_digest,
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+            )
+
+    def test_task_budget_projection_tamper_fails_closed(self) -> None:
+        run_id = self._create_bound_running_task()
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET provider_budget_minor_units = 999 "
+                "WHERE task_id = ?",
+                (self.task.task_spec.task_id,),
+            )
+            self.assertFalse(
+                _required_decision_gates_satisfied(
+                    connection, self.task.task_spec.task_id
+                )
+            )
+        with self.assertRaisesRegex(AuthorizationError, "binding mismatch"):
+            PolicyEngine(self.store).record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=self.identities.worker,
+                approver=self.identities.owner,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource="repo://afs/worktrees/core/api/path.py",
+                request_digest=content_hash({"decision": "tampered-budget"}),
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+            )
 
 
 if __name__ == "__main__":

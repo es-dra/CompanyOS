@@ -16,7 +16,14 @@ from .authority import (
 )
 from .compiler import CompilationResult, compile_goal, compile_task
 from .errors import ContractError
-from .types import GoalSpec
+from .types import Capability, GoalSpec
+
+
+_DECISION_GATE_CAPABILITIES = {
+    "provider": Capability.PROVIDER_COST,
+    "merge": Capability.REPO_REMOTE,
+    "release": Capability.PUBLIC_RELEASE,
+}
 
 
 class CurrentProgramStateProvider(Protocol):
@@ -214,6 +221,23 @@ def validate_task_authority(
         raise ContractError("Task cannot bypass Goal authority")
     if canonical.required_decision_gates != canonical_goal.required_decision_gates:
         raise ContractError("Task decision gates do not match compiled Goal authority")
+    for gate in canonical.required_decision_gates:
+        capability = _DECISION_GATE_CAPABILITIES.get(gate)
+        if capability is None:
+            raise ContractError(
+                f"Task decision gate has no explicit decision authority: {gate}"
+            )
+        if capability not in canonical.task_spec.capabilities:
+            raise ContractError(
+                f"Task decision gate {gate} requires capability {capability.value}"
+            )
+    if "provider" in canonical.required_decision_gates and (
+        canonical.provider_budget_minor_units < 1
+        or canonical.provider_call_limit < 1
+    ):
+        raise ContractError(
+            "Task provider decision gate requires a positive Task budget and call limit"
+        )
     if canonical.task_spec.goal_id != canonical_goal.goal_spec.goal_id:
         raise ContractError("Task goal_id does not match compiled Goal authority")
     task_bounds = AuthorityBounds(

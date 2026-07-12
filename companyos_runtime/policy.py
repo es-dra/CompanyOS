@@ -9,7 +9,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from .authority import CompiledTaskAuthority
+from .authority import CompiledGoalAuthority, CompiledTaskAuthority, ProgramSpec, ProjectSpec
 from .errors import AuthorizationError, ContractError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .scope import scope_allowed, scopes_overlap, validate_task_within_goal
@@ -25,6 +25,73 @@ _DECISION_GATE_CAPABILITIES = {
 }
 
 
+def _validated_task_authority_binding(
+    connection: Any, task_id: str
+) -> tuple[CompiledTaskAuthority, Any] | None:
+    task = connection.execute(
+        "SELECT project_id, goal_id FROM tasks WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    if task is None:
+        raise AuthorizationError(f"task does not exist: {task_id}")
+    adopted = connection.execute(
+        "SELECT spec_json FROM adopted_projects WHERE project_id = ?",
+        (task["project_id"],),
+    ).fetchone()
+    binding = connection.execute(
+        "SELECT * FROM task_authority_bindings WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    if binding is None:
+        if adopted is not None:
+            raise AuthorizationError("adopted Task authority binding is missing")
+        return None
+    try:
+        authority = CompiledTaskAuthority.from_dict(json.loads(binding["authority_json"]))
+    except (ContractError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise AuthorizationError("persisted Task authority binding is malformed") from exc
+    if (
+        authority.task_spec.task_id != task_id
+        or authority.task_spec.goal_id != task["goal_id"]
+        or authority.project_ref.object_id != task["project_id"]
+        or authority.goal_ref.object_id != task["goal_id"]
+        or content_hash(authority.to_dict()) != binding["authority_digest"]
+        or int(binding["provider_budget_minor_units"])
+        != authority.provider_budget_minor_units
+        or int(binding["provider_call_limit"]) != authority.provider_call_limit
+        or json.loads(binding["required_decision_gates_json"])
+        != list(authority.required_decision_gates)
+    ):
+        raise AuthorizationError("persisted Task authority binding mismatch")
+    project_row = connection.execute(
+        "SELECT spec_json FROM adopted_projects WHERE project_id = ?",
+        (task["project_id"],),
+    ).fetchone()
+    program_row = connection.execute(
+        "SELECT spec_json FROM adopted_programs WHERE program_id = ? AND project_id = ?",
+        (binding["program_id"], task["project_id"]),
+    ).fetchone()
+    goal_row = connection.execute(
+        "SELECT authority_json, authority_digest FROM goal_authority_bindings "
+        "WHERE goal_id = ? AND project_id = ?",
+        (task["goal_id"], task["project_id"]),
+    ).fetchone()
+    if project_row is None or program_row is None or goal_row is None:
+        raise AuthorizationError("persisted Task authority parent binding is missing")
+    try:
+        project = ProjectSpec.from_dict(json.loads(project_row["spec_json"]))
+        program = ProgramSpec.from_dict(json.loads(program_row["spec_json"]))
+        goal = CompiledGoalAuthority.from_dict(json.loads(goal_row["authority_json"]))
+    except (ContractError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise AuthorizationError("persisted Task authority parent is malformed") from exc
+    if (
+        authority.project_ref != project.reference()
+        or authority.program_ref != program.reference()
+        or authority.goal_ref != goal.reference()
+        or content_hash(goal.to_dict()) != goal_row["authority_digest"]
+    ):
+        raise AuthorizationError("persisted Task authority parent reference is stale")
+    return authority, binding
+
+
 def _required_decision_gates_satisfied(
     connection: Any,
     task_id: str,
@@ -32,25 +99,14 @@ def _required_decision_gates_satisfied(
     required_gates: tuple[str, ...] | None = None,
     exact_request: tuple[str, str, str, str] | None = None,
 ) -> bool:
-    binding = connection.execute(
-        "SELECT required_decision_gates_json, authority_digest, authority_json, project_id "
-        "FROM task_authority_bindings WHERE task_id = ?",
-        (task_id,),
-    ).fetchone()
-    if binding is None:
-        return True
     try:
-        authority = CompiledTaskAuthority.from_dict(json.loads(binding["authority_json"]))
-        gates = json.loads(binding["required_decision_gates_json"])
-    except (ContractError, TypeError, ValueError, json.JSONDecodeError):
+        validated = _validated_task_authority_binding(connection, task_id)
+    except AuthorizationError:
         return False
-    if (
-        authority.task_spec.task_id != task_id
-        or authority.project_ref.object_id != binding["project_id"]
-        or content_hash(authority.to_dict()) != binding["authority_digest"]
-        or list(authority.required_decision_gates) != gates
-    ):
-        return False
+    if validated is None:
+        return True
+    authority, binding = validated
+    gates = list(authority.required_decision_gates)
     binding_version = authority.version
     gates_to_check = tuple(required_gates) if required_gates is not None else tuple(gates)
     if any(gate not in gates for gate in gates_to_check):
@@ -120,7 +176,7 @@ _CAPABILITY_ACTIONS: dict[Capability, frozenset[str]] = {
         }
     ),
     Capability.EXTERNAL_DOWNLOAD: frozenset({"download", "fetch", "get", "head"}),
-    Capability.REPO_REMOTE: frozenset({"open_pr", "push", "update_pr"}),
+    Capability.REPO_REMOTE: frozenset({"merge", "open_pr", "push", "update_pr"}),
     Capability.SERVER_READ: frozenset(
         {"inspect", "list", "logs", "probe", "query", "read", "status"}
     ),
@@ -693,22 +749,19 @@ class PolicyEngine:
             )
             now = self._now(connection)
             expires_at = self._expires(connection, ttl_seconds)
-            authority_binding = connection.execute(
-                "SELECT authority_digest, authority_json, required_decision_gates_json "
-                "FROM task_authority_bindings WHERE task_id = ?",
-                (task_id,),
-            ).fetchone()
+            validated_binding = _validated_task_authority_binding(connection, task_id)
             binding_digest = None
             binding_version = None
             decision_gate = None
-            if authority_binding is not None:
-                required_gates = json.loads(authority_binding["required_decision_gates_json"])
+            if validated_binding is not None:
+                authority, authority_binding = validated_binding
+                required_gates = list(authority.required_decision_gates)
                 for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items():
                     if gate_capability == capability_value and gate in required_gates:
                         decision_gate = gate
                         break
                 binding_digest = authority_binding["authority_digest"]
-                binding_version = json.loads(authority_binding["authority_json"])["version"]
+                binding_version = authority.version
             self.store.append_event(
                 connection,
                 aggregate_type="approval",
@@ -915,12 +968,11 @@ class PolicyEngine:
                     raise AuthorizationError(
                         "goal provider call limit reservation would be exceeded"
                     )
-                task_authority = connection.execute(
-                    "SELECT provider_budget_minor_units, provider_call_limit "
-                    "FROM task_authority_bindings WHERE task_id = ?",
-                    (approval["task_id"],),
-                ).fetchone()
-                if task_authority is not None:
+                validated_task_authority = _validated_task_authority_binding(
+                    connection, approval["task_id"]
+                )
+                if validated_task_authority is not None:
+                    task_authority, _binding = validated_task_authority
                     task_reserved = connection.execute(
                         "SELECT COALESCE(SUM(cost_limit), 0) AS cost, "
                         "COALESCE(SUM(max_uses), 0) AS calls FROM capability_grants "
@@ -929,13 +981,13 @@ class PolicyEngine:
                         (approval["task_id"], Capability.PROVIDER_COST.value),
                     ).fetchone()
                     if int(task_reserved["cost"]) + cost_limit > int(
-                        task_authority["provider_budget_minor_units"]
+                        task_authority.provider_budget_minor_units
                     ):
                         raise AuthorizationError(
                             "compiled Task provider budget reservation would be exceeded"
                         )
                     if int(task_reserved["calls"]) + max_uses > int(
-                        task_authority["provider_call_limit"]
+                        task_authority.provider_call_limit
                     ):
                         raise AuthorizationError(
                             "compiled Task provider call limit reservation would be exceeded"
@@ -1478,12 +1530,11 @@ class PolicyEngine:
             if int(grant["cost_used"]) + cost > int(grant["cost_limit"]):
                 raise AuthorizationError(f"grant cost limit exceeded: {grant_id}")
             if capability_value == Capability.PROVIDER_COST.value:
-                task_authority = connection.execute(
-                    "SELECT provider_budget_minor_units, provider_call_limit "
-                    "FROM task_authority_bindings WHERE task_id = ?",
-                    (task_id,),
-                ).fetchone()
-                if task_authority is not None:
+                validated_task_authority = _validated_task_authority_binding(
+                    connection, task_id
+                )
+                if validated_task_authority is not None:
+                    task_authority, _binding = validated_task_authority
                     consumed = connection.execute(
                         "SELECT COALESCE(SUM(u.cost), 0) AS cost, COUNT(*) AS calls "
                         "FROM capability_usage AS u JOIN capability_grants AS g "
@@ -1492,11 +1543,11 @@ class PolicyEngine:
                         (task_id, Capability.PROVIDER_COST.value),
                     ).fetchone()
                     if int(consumed["cost"]) + cost > int(
-                        task_authority["provider_budget_minor_units"]
+                        task_authority.provider_budget_minor_units
                     ):
                         raise AuthorizationError("compiled Task provider budget exceeded")
                     if int(consumed["calls"]) + 1 > int(
-                        task_authority["provider_call_limit"]
+                        task_authority.provider_call_limit
                     ):
                         raise AuthorizationError("compiled Task provider call limit exceeded")
 
