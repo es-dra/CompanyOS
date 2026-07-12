@@ -69,21 +69,46 @@ class _OwnedFile:
     path: Path
     device: int
     inode: int
+    size: int | None = None
+    modified_ns: int | None = None
+    changed_ns: int | None = None
 
     @classmethod
     def from_descriptor(cls, path: Path, descriptor: int) -> _OwnedFile:
         created = os.fstat(descriptor)
         return cls(path=path, device=created.st_dev, inode=created.st_ino)
 
+    def refreshed(self) -> _OwnedFile:
+        current = self.path.lstat()
+        if current.st_dev != self.device or current.st_ino != self.inode:
+            raise IntegrityError("created target identity changed before verification")
+        return _OwnedFile(
+            path=self.path,
+            device=self.device,
+            inode=self.inode,
+            size=current.st_size,
+            modified_ns=current.st_mtime_ns,
+            changed_ns=current.st_ctime_ns,
+        )
+
     def still_owns_path(self) -> bool:
         try:
             current = self.path.lstat()
         except FileNotFoundError:
             return False
-        return (
+        identity_matches = (
             stat.S_ISREG(current.st_mode)
             and current.st_dev == self.device
             and current.st_ino == self.inode
+        )
+        if not identity_matches:
+            return False
+        if self.size is None:
+            return True
+        return (
+            current.st_size == self.size
+            and current.st_mtime_ns == self.modified_ns
+            and current.st_ctime_ns == self.changed_ns
         )
 
 
@@ -271,7 +296,7 @@ def _online_copy(source: Path, target: Path) -> _OwnedFile:
                 target_connection.close()
             if source_connection is not None:
                 source_connection.close()
-        return owned
+        return owned.refreshed()
     except Exception:
         _remove_created_database(owned)
         raise
@@ -289,7 +314,7 @@ def _write_exclusive(path: Path, content: str) -> _OwnedFile:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
             stream.write(content)
-        return owned
+        return owned.refreshed()
     except Exception:
         try:
             os.close(descriptor)
