@@ -6,8 +6,15 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .authority import CompiledGoalAuthority, CompiledTaskAuthority, ProgramSpec, ProjectSpec
-from .errors import IntegrityError
+from .authority import (
+    AuthorityRef,
+    CompiledGoalAuthority,
+    CompiledTaskAuthority,
+    ProgramSpec,
+    ProjectSpec,
+)
+from .authority_compiler import validate_program_graph
+from .errors import ContractError, IntegrityError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .state_machine import apply_loop_event, require_transition
 from .store import SQLiteStore
@@ -141,6 +148,7 @@ class ProjectionReplayer:
                 self._apply_run(runs, goals, row, payload)
             else:
                 self._apply_task(tasks, goals, runs, row, payload)
+        self._validate_authority_graph(projects, programs)
         return ReplayResult(
             goals=goals,
             runs=runs,
@@ -169,6 +177,7 @@ class ProjectionReplayer:
             "digest": project.reference().digest,
             "spec_json": canonical_json(project.to_dict()),
             "current_program_id": payload["current_program_id"],
+            "_spec": project,
         }
 
     @staticmethod
@@ -184,7 +193,15 @@ class ProjectionReplayer:
         if set(payload) != {"program_spec", "graph_refs", "graph_digest"}:
             raise IntegrityError("Program authority event payload is invalid")
         program = ProgramSpec.from_dict(payload["program_spec"])
-        if program.program_id != program_id or program.project_ref.object_id not in projects:
+        project = projects.get(program.project_ref.object_id)
+        if (
+            program.program_id != program_id
+            or project is None
+            or program.project_ref
+            != AuthorityRef(
+                "project", project["project_id"], project["version"], project["digest"]
+            )
+        ):
             raise IntegrityError("Program authority event has a missing/mismatched Project")
         graph_refs = payload["graph_refs"]
         if not isinstance(graph_refs, list) or payload["graph_digest"] != content_hash(graph_refs):
@@ -199,7 +216,48 @@ class ProjectionReplayer:
             "state": program.state.value,
             "graph_digest": payload["graph_digest"],
             "spec_json": canonical_json(program.to_dict()),
+            "_spec": program,
+            "_graph_refs": graph_refs,
         }
+
+    @staticmethod
+    def _validate_authority_graph(
+        projects: dict[str, dict[str, Any]], programs: dict[str, dict[str, Any]]
+    ) -> None:
+        for project_id, project in projects.items():
+            project_programs = {
+                program_id: value
+                for program_id, value in programs.items()
+                if value["project_id"] == project_id
+            }
+            current_program_id = project["current_program_id"]
+            if not isinstance(current_program_id, str) or current_program_id not in project_programs:
+                raise IntegrityError("Project authority current Program is missing")
+            specs = tuple(value["_spec"] for value in project_programs.values())
+            expected_refs = [
+                item.reference().to_dict()
+                for item in sorted(specs, key=lambda item: (item.wave, item.program_id))
+            ]
+            expected_digest = content_hash(expected_refs)
+            for value in project_programs.values():
+                raw_refs = value["_graph_refs"]
+                try:
+                    refs = [AuthorityRef.from_dict(item) for item in raw_refs]
+                except (ContractError, TypeError) as exc:
+                    raise IntegrityError("Program authority graph reference is malformed") from exc
+                if (
+                    len(refs) != len(set(refs))
+                    or any(ref.kind != "program" for ref in refs)
+                    or raw_refs != expected_refs
+                    or value["graph_digest"] != expected_digest
+                ):
+                    raise IntegrityError("Program authority graph is incomplete or stale")
+            try:
+                validate_program_graph(project["_spec"], specs)
+            except ContractError as exc:
+                raise IntegrityError("Program authority dependency graph is invalid") from exc
+            if project_programs[current_program_id]["_spec"].state.terminal:
+                raise IntegrityError("Project authority current Program is terminal")
 
     @staticmethod
     def _apply_goal_authority(
@@ -213,10 +271,17 @@ class ProjectionReplayer:
         if row["event_type"] != "goal_authority_bound" or goal_id in authorities:
             raise IntegrityError(f"unsupported or duplicate Goal authority event: {goal_id}")
         authority = CompiledGoalAuthority.from_dict(payload)
+        project = projects.get(authority.project_ref.object_id)
+        program = programs.get(authority.program_ref.object_id)
         if (
             authority.goal_spec.goal_id != goal_id
-            or authority.project_ref.object_id not in projects
-            or authority.program_ref.object_id not in programs
+            or project is None
+            or program is None
+            or authority.project_ref
+            != AuthorityRef("project", project["project_id"], project["version"], project["digest"])
+            or authority.program_ref
+            != AuthorityRef("program", program["program_id"], program["version"], program["digest"])
+            or program["project_id"] != project["project_id"]
         ):
             raise IntegrityError("Goal authority event has stale parent references")
         authorities[goal_id] = {
@@ -226,6 +291,7 @@ class ProjectionReplayer:
             "authority_digest": content_hash(authority.to_dict()),
             "authority_json": canonical_json(authority.to_dict()),
             "source_event_id": row["event_id"],
+            "_reference": authority.reference(),
         }
 
     @staticmethod
@@ -241,11 +307,21 @@ class ProjectionReplayer:
         if row["event_type"] != "task_authority_bound" or task_id in authorities:
             raise IntegrityError(f"unsupported or duplicate Task authority event: {task_id}")
         authority = CompiledTaskAuthority.from_dict(payload)
+        goal = goals.get(authority.goal_ref.object_id)
+        project = projects.get(authority.project_ref.object_id)
+        program = programs.get(authority.program_ref.object_id)
         if (
             authority.task_spec.task_id != task_id
-            or authority.goal_ref.object_id not in goals
-            or authority.project_ref.object_id not in projects
-            or authority.program_ref.object_id not in programs
+            or goal is None
+            or project is None
+            or program is None
+            or authority.goal_ref != goal["_reference"]
+            or authority.project_ref
+            != AuthorityRef("project", project["project_id"], project["version"], project["digest"])
+            or authority.program_ref
+            != AuthorityRef("program", program["program_id"], program["version"], program["digest"])
+            or goal["project_id"] != project["project_id"]
+            or goal["program_id"] != program["program_id"]
         ):
             raise IntegrityError("Task authority event has stale parent references")
         authorities[task_id] = {
