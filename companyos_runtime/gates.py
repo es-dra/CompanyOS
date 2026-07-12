@@ -34,6 +34,31 @@ _INTEGRATION_FINAL = {
     IntegrationState.SUPERSEDED.value,
 }
 _HEALTHY = {"healthy", "ok", "pass"}
+_DECISION_GATE_CAPABILITIES = {
+    "provider": Capability.PROVIDER_COST.value,
+    "merge": Capability.REPO_REMOTE.value,
+    "release": Capability.PUBLIC_RELEASE.value,
+}
+
+
+def _decision_gates_satisfied(connection: Any, task_id: str) -> bool:
+    row = connection.execute(
+        "SELECT required_decision_gates_json FROM task_authority_bindings WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return True
+    for gate in json.loads(row["required_decision_gates_json"]):
+        capability = _DECISION_GATE_CAPABILITIES.get(gate)
+        clause = "capability = ?" if capability is not None else "action = ?"
+        value = capability if capability is not None else gate
+        if connection.execute(
+            f"SELECT 1 FROM approvals WHERE task_id = ? AND {clause} "
+            "AND decision = 'approved' AND julianday(expires_at) > julianday('now') LIMIT 1",
+            (task_id, value),
+        ).fetchone() is None:
+            return False
+    return True
 
 
 class GuardResolver:
@@ -261,13 +286,19 @@ class GuardResolver:
         # v0.2 has no optional/superseded TaskSpec semantic. Cancellation,
         # deletion, failure, or retirement therefore cannot prove successful
         # Run delivery; every declared task must pass its own delivery gate.
-        return all(task["state"] == TaskState.DELIVERED.value for task in tasks)
+        return all(
+            task["state"] == TaskState.DELIVERED.value
+            and _decision_gates_satisfied(connection, task["task_id"])
+            for task in tasks
+        )
 
     def _integration_satisfied(self, connection: Any, run: Mapping[str, Any]) -> bool:
         tasks = self._task_rows(connection, run, {})
         if not tasks:
             return False
         for task in tasks:
+            if not _decision_gates_satisfied(connection, task["task_id"]):
+                return False
             spec = TaskSpec.from_dict(json.loads(task["spec_json"]))
             if not spec.integration_required:
                 continue

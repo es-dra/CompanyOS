@@ -494,7 +494,7 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
         )
         self.assertEqual(created["task_id"], "task-core")
 
-    def test_restart_without_durable_goal_binding_fails_closed(self) -> None:
+    def test_restart_restores_durable_goal_and_task_authority_binding(self) -> None:
         self.kernel.create_goal(
             project_id="afs",
             spec=self.goal.goal_spec,
@@ -506,13 +506,35 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
             self.store,
             authority_spines={"afs": (self.project, self.program)},
         )
-        with self.assertRaisesRegex(ContractError, "binding is unavailable"):
-            restarted.add_task(
+        restarted.initialize()
+        created = restarted.add_task(
+            project_id="afs",
+            spec=self.task.task_spec,
+            compiled_authority=self.task,
+            actor=self.identities.system,
+            idempotency_key="task-after-restart",
+        )
+        self.assertEqual(created["task_id"], "task-core")
+        with self.store.transaction() as connection:
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM task_authority_bindings WHERE task_id = 'task-core'"
+                ).fetchone()
+            )
+
+    def test_constructor_omission_cannot_downgrade_adopted_project(self) -> None:
+        omitted = RuntimeKernel(self.store)
+        another_goal = goal_packet()
+        another_goal["goal_id"] = "goal-omission"
+        compiled, _ = compile_goal_authority(
+            another_goal, project=self.project, program=self.program
+        )
+        with self.assertRaisesRegex(ContractError, "CompiledGoalAuthority"):
+            omitted.create_goal(
                 project_id="afs",
-                spec=self.task.task_spec,
-                compiled_authority=self.task,
-                actor=self.identities.system,
-                idempotency_key="task-after-restart",
+                spec=compiled.goal_spec,
+                actor=self.identities.owner,
+                idempotency_key="omitted-spine",
             )
 
 
