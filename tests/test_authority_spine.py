@@ -224,6 +224,55 @@ class AuthoritySpineTests(unittest.TestCase):
         with self.assertRaises((AttributeError, TypeError)):
             self.program.wave = 2  # type: ignore[misc]
 
+    def test_decision_gate_digest_binds_exact_workflow_request(self) -> None:
+        packet = task_packet()
+        packet["workflow_steps"] = [
+            {
+                "step_id": "generate-keyframe",
+                "adapter": "image-provider",
+                "action": "generate",
+                "resource": "provider://afs/image/keyframes/model",
+                "request_digest": content_hash(
+                    {"prompt": "bounded keyframe", "seed": 7}
+                ),
+            },
+            {
+                "step_id": "merge-authority",
+                "adapter": "git",
+                "action": "merge",
+                "resource": "repo://afs/worktrees/core/api/path.py",
+                "request_digest": content_hash(
+                    {"head": "commit:authority", "base": "commit:runtime"}
+                ),
+            },
+            {
+                "step_id": "release-authority",
+                "adapter": "release",
+                "action": "release",
+                "resource": "release://afs/core/v1",
+                "request_digest": content_hash(
+                    {"artifact": "authority-spine", "version": "v1"}
+                ),
+            },
+        ]
+        task, _ = compile_task_authority(
+            packet,
+            project=self.project,
+            program=self.program,
+            goal=self.goal,
+            provider_budget_minor_units=500,
+            provider_call_limit=1,
+        )
+        workflow_digests = {
+            (step["action"], step["resource"]): step["request_digest"]
+            for step in task.task_spec.workflow_steps
+        }
+        for contract in task.decision_gate_contracts:
+            self.assertEqual(
+                contract.request_digest,
+                workflow_digests[(contract.action, contract.resource)],
+            )
+
     def test_from_dict_rejects_forged_gate_action_with_recomputed_digest(self) -> None:
         task, _ = compile_task_authority(
             task_packet(),
