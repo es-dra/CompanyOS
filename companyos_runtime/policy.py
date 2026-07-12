@@ -14,7 +14,15 @@ from .errors import AuthorizationError, ContractError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .scope import scope_allowed, scopes_overlap, validate_task_within_goal
 from .store import SQLiteStore, protected_authority_config_digest
-from .types import Capability, GoalSpec, LoopState, TaskSpec, TaskState, content_hash
+from .types import (
+    Capability,
+    GoalSpec,
+    LoopState,
+    TaskSpec,
+    TaskState,
+    canonical_json,
+    content_hash,
+)
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -53,6 +61,24 @@ def _validated_task_authority_binding(
         authority = CompiledTaskAuthority.from_dict(json.loads(binding["authority_json"]))
     except (ContractError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise AuthorizationError("persisted Task authority binding is malformed") from exc
+    source_event = connection.execute(
+        "SELECT aggregate_type, aggregate_id, project_id, task_id, event_type, "
+        "payload_json, payload_digest FROM events WHERE event_id = ?",
+        (binding["source_event_id"],),
+    ).fetchone()
+    canonical_authority_json = canonical_json(authority.to_dict())
+    if (
+        source_event is None
+        or source_event["aggregate_type"] != "task_authority"
+        or source_event["aggregate_id"] != task_id
+        or source_event["project_id"] != binding["project_id"]
+        or source_event["task_id"] != task_id
+        or source_event["event_type"] != "task_authority_bound"
+        or source_event["payload_json"] != canonical_authority_json
+        or source_event["payload_digest"] != content_hash(canonical_authority_json)
+        or binding["authority_json"] != canonical_authority_json
+    ):
+        raise AuthorizationError("persisted Task authority source event mismatch")
     if (
         authority.task_spec.task_id != task_id
         or authority.task_spec.goal_id != task["goal_id"]

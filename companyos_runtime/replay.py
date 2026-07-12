@@ -306,7 +306,10 @@ class ProjectionReplayer:
         task_id = row["aggregate_id"]
         if row["event_type"] != "task_authority_bound" or task_id in authorities:
             raise IntegrityError(f"unsupported or duplicate Task authority event: {task_id}")
-        authority = CompiledTaskAuthority.from_dict(payload)
+        try:
+            authority = CompiledTaskAuthority.from_dict(payload)
+        except (ContractError, TypeError, ValueError) as exc:
+            raise IntegrityError("Task authority event is not canonical") from exc
         goal = goals.get(authority.goal_ref.object_id)
         project = projects.get(authority.project_ref.object_id)
         program = programs.get(authority.program_ref.object_id)

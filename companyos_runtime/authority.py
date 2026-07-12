@@ -470,6 +470,53 @@ class DecisionGateContract:
         }
 
 
+_DECISION_GATE_DEFINITIONS = {
+    "provider": (Capability.PROVIDER_COST, "generate", "provider://"),
+    "merge": (Capability.REPO_REMOTE, "merge", "repo://"),
+    "release": (Capability.PUBLIC_RELEASE, "release", "release://"),
+}
+
+
+def _canonical_decision_gate_contracts(
+    task: TaskSpec, gates: tuple[str, ...]
+) -> tuple[DecisionGateContract, ...]:
+    contracts: list[DecisionGateContract] = []
+    for gate in gates:
+        definition = _DECISION_GATE_DEFINITIONS.get(gate)
+        if definition is None:
+            raise ContractError(
+                f"Task decision gate has no explicit decision authority: {gate}"
+            )
+        capability, action, scheme = definition
+        resources = tuple(
+            scope
+            for scope in task.write_scope
+            if scope.casefold().startswith(scheme) and "*" not in scope
+        )
+        if len(resources) != 1:
+            raise ContractError(
+                f"Task decision gate {gate} requires exactly one exact {scheme} write_scope"
+            )
+        resource = resources[0]
+        contracts.append(
+            DecisionGateContract(
+                gate_id=gate,
+                capability=capability,
+                action=action,
+                resource=resource,
+                request_digest=content_hash(
+                    {
+                        "gate_id": gate,
+                        "capability": capability.value,
+                        "action": action,
+                        "resource": resource,
+                    }
+                ),
+            )
+        )
+    return tuple(contracts)
+
+
 @dataclass(frozen=True)
 class CompiledTaskAuthority:
     version: int
@@ -507,14 +554,16 @@ class CompiledTaskAuthority:
         ):
             raise ContractError("compiled_task_authority has invalid parent ref kinds")
         currency = _text(data["budget_currency"], "task budget_currency").upper()
+        required_decision_gates = _strings(
+            data["required_decision_gates"], "required_decision_gates"
+        )
+        task_spec = TaskSpec.from_dict(data["task_spec"])
         result = cls(
             version=_positive_int(data["version"], "task authority version"),
             project_ref=project_ref,
             program_ref=program_ref,
             goal_ref=goal_ref,
-            required_decision_gates=_strings(
-                data["required_decision_gates"], "required_decision_gates"
-            ),
+            required_decision_gates=required_decision_gates,
             decision_gate_contracts=tuple(
                 DecisionGateContract.from_dict(item)
                 for item in data["decision_gate_contracts"]
@@ -528,7 +577,7 @@ class CompiledTaskAuthority:
                 data["provider_call_limit"], "task provider call limit"
             ),
             budget_currency=currency,
-            task_spec=TaskSpec.from_dict(data["task_spec"]),
+            task_spec=task_spec,
         )
         if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
             raise ContractError("task budget_currency must be three ASCII letters")
@@ -538,6 +587,12 @@ class CompiledTaskAuthority:
         if gate_ids != result.required_decision_gates or len(gate_ids) != len(set(gate_ids)):
             raise ContractError(
                 "decision_gate_contracts must exactly match required_decision_gates order"
+            )
+        if result.decision_gate_contracts != _canonical_decision_gate_contracts(
+            task_spec, required_decision_gates
+        ):
+            raise ContractError(
+                "decision_gate_contracts do not match canonical Task gate authority"
             )
         return result
 

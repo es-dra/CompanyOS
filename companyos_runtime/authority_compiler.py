@@ -8,16 +8,16 @@ from .authority import (
     AuthorityBounds,
     CompiledGoalAuthority,
     CompiledTaskAuthority,
-    DecisionGateContract,
     ProgramSpec,
     ProjectSpec,
     _non_negative_int,
     _positive_int,
+    _canonical_decision_gate_contracts,
     validate_child_bounds,
 )
 from .compiler import CompilationResult, compile_goal, compile_task
 from .errors import ContractError
-from .types import Capability, GoalSpec, content_hash
+from .types import Capability, GoalSpec
 
 
 _DECISION_GATE_CAPABILITIES = {
@@ -25,60 +25,6 @@ _DECISION_GATE_CAPABILITIES = {
     "merge": Capability.REPO_REMOTE,
     "release": Capability.PUBLIC_RELEASE,
 }
-_DECISION_GATE_RESOURCE_SCHEMES = {
-    "provider": "provider://",
-    "merge": "repo://",
-    "release": "release://",
-}
-_DECISION_GATE_ACTIONS = {
-    "provider": "generate",
-    "merge": "merge",
-    "release": "release",
-}
-
-
-def _compile_decision_gate_contracts(
-    task: Any, gates: tuple[str, ...]
-) -> tuple[DecisionGateContract, ...]:
-    contracts: list[DecisionGateContract] = []
-    for gate in gates:
-        capability = _DECISION_GATE_CAPABILITIES.get(gate)
-        scheme = _DECISION_GATE_RESOURCE_SCHEMES.get(gate)
-        action = _DECISION_GATE_ACTIONS.get(gate)
-        if capability is None or scheme is None or action is None:
-            raise ContractError(
-                f"Task decision gate has no explicit decision authority: {gate}"
-            )
-        resources = tuple(
-            scope
-            for scope in task.write_scope
-            if scope.casefold().startswith(scheme) and "*" not in scope
-        )
-        if len(resources) != 1:
-            raise ContractError(
-                f"Task decision gate {gate} requires exactly one exact {scheme} write_scope"
-            )
-        resource = resources[0]
-        request_digest = content_hash(
-            {
-                "gate_id": gate,
-                "capability": capability.value,
-                "action": action,
-                "resource": resource,
-            }
-        )
-        contracts.append(
-            DecisionGateContract(
-                gate_id=gate,
-                capability=capability,
-                action=action,
-                resource=resource,
-                request_digest=request_digest,
-            )
-        )
-    return tuple(contracts)
-
-
 class CurrentProgramStateProvider(Protocol):
     """Trusted application boundary for active/terminal Program versions."""
 
@@ -274,7 +220,7 @@ def validate_task_authority(
         raise ContractError("Task cannot bypass Goal authority")
     if canonical.required_decision_gates != canonical_goal.required_decision_gates:
         raise ContractError("Task decision gates do not match compiled Goal authority")
-    expected_gate_contracts = _compile_decision_gate_contracts(
+    expected_gate_contracts = _canonical_decision_gate_contracts(
         canonical.task_spec, canonical.required_decision_gates
     )
     if canonical.decision_gate_contracts != expected_gate_contracts:
@@ -365,7 +311,7 @@ def compile_task_authority(
             program_ref=ProgramSpec.from_dict(program.to_dict()).reference(),
             goal_ref=canonical_goal.reference(),
             required_decision_gates=canonical_goal.required_decision_gates,
-            decision_gate_contracts=_compile_decision_gate_contracts(
+            decision_gate_contracts=_canonical_decision_gate_contracts(
                 task, canonical_goal.required_decision_gates
             ),
             provider_budget_minor_units=task_bounds.provider_budget_minor_units,

@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator, RefResolver  # type: ignore[import-
 
 from companyos_runtime.authority import (
     CompiledGoalAuthority,
+    CompiledTaskAuthority,
     ProgramSpec,
     ProgramState,
     ProjectSpec,
@@ -37,6 +38,7 @@ from companyos_runtime.types import (
     EvidenceState,
     EvaluatorVerdict,
     IntegrationState,
+    canonical_json,
     content_hash,
 )
 from tests.identity_fixtures import IdentityFixture
@@ -180,6 +182,21 @@ def task_packet(goal_id: str = "goal-core") -> dict[str, object]:
     }
 
 
+def forged_gate_authority(authority: CompiledTaskAuthority) -> dict[str, Any]:
+    forged = copy.deepcopy(authority.to_dict())
+    contract = forged["decision_gate_contracts"][0]
+    contract["action"] = "forged-generate"
+    contract["request_digest"] = content_hash(
+        {
+            "gate_id": contract["gate_id"],
+            "capability": contract["capability"],
+            "action": contract["action"],
+            "resource": contract["resource"],
+        }
+    )
+    return forged
+
+
 class AuthoritySpineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.project = compile_project(project_packet())
@@ -202,6 +219,18 @@ class AuthoritySpineTests(unittest.TestCase):
         self.assertEqual(task.goal_ref, self.goal.reference())
         with self.assertRaises((AttributeError, TypeError)):
             self.program.wave = 2  # type: ignore[misc]
+
+    def test_from_dict_rejects_forged_gate_action_with_recomputed_digest(self) -> None:
+        task, _ = compile_task_authority(
+            task_packet(),
+            project=self.project,
+            program=self.program,
+            goal=self.goal,
+            provider_budget_minor_units=500,
+            provider_call_limit=1,
+        )
+        with self.assertRaisesRegex(ContractError, "canonical Task gate authority"):
+            CompiledTaskAuthority.from_dict(forged_gate_authority(task))
 
     def test_strict_contracts_reject_unknown_fields(self) -> None:
         packet = project_packet()
@@ -710,6 +739,97 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(IntegrityError, "projection mismatch"):
             ProjectionReplayer(self.store).verify()
+
+    def test_replay_rejects_forged_gate_action_with_recomputed_digest(self) -> None:
+        self._create_bound_running_task()
+        replayed = ProjectionReplayer(self.store).replay()
+        with self.assertRaisesRegex(IntegrityError, "not canonical"):
+            ProjectionReplayer._apply_task_authority(
+                {},
+                replayed.goal_authorities,
+                replayed.projects,
+                replayed.programs,
+                {
+                    "aggregate_id": self.task.task_spec.task_id,
+                    "event_type": "task_authority_bound",
+                    "event_id": "forged-task-authority-event",
+                },
+                forged_gate_authority(self.task),
+            )
+
+    def test_restart_policy_rejects_forged_gate_and_projection_not_bound_to_event(
+        self,
+    ) -> None:
+        run_id = self._create_bound_running_task()
+        forged = forged_gate_authority(self.task)
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET authority_json = ?, "
+                "authority_digest = ?, required_decision_gates_json = ? "
+                "WHERE task_id = ?",
+                (
+                    canonical_json(forged),
+                    content_hash(forged),
+                    canonical_json(forged["decision_gate_contracts"]),
+                    self.task.task_spec.task_id,
+                ),
+            )
+        restarted_store = SQLiteStore(Path(self.temp.name) / "runtime.db")
+        with restarted_store.transaction() as connection:
+            self.assertFalse(
+                _required_decision_gates_satisfied(
+                    connection, self.task.task_spec.task_id
+                )
+            )
+        with self.assertRaisesRegex(AuthorizationError, "binding is malformed"):
+            PolicyEngine(restarted_store).record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=self.identities.worker,
+                approver=self.identities.owner,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource="provider://afs/image/keyframes/model",
+                request_digest=forged["decision_gate_contracts"][0]["request_digest"],
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+            )
+
+    def test_restart_policy_readback_is_bound_to_original_authority_event(self) -> None:
+        run_id = self._create_bound_running_task()
+        forged = copy.deepcopy(self.task.to_dict())
+        forged["task_spec"]["objective"] = "forged but structurally canonical task"
+        CompiledTaskAuthority.from_dict(forged)
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET authority_json = ?, "
+                "authority_digest = ? WHERE task_id = ?",
+                (
+                    canonical_json(forged),
+                    content_hash(forged),
+                    self.task.task_spec.task_id,
+                ),
+            )
+        restarted_store = SQLiteStore(Path(self.temp.name) / "runtime.db")
+        with self.assertRaisesRegex(AuthorizationError, "source event mismatch"):
+            PolicyEngine(restarted_store).record_approval(
+                project_id="afs",
+                goal_id=self.goal.goal_spec.goal_id,
+                run_id=run_id,
+                task_id=self.task.task_spec.task_id,
+                requester=self.identities.worker,
+                approver=self.identities.owner,
+                capability=Capability.PROVIDER_COST,
+                action="generate",
+                resource="provider://afs/image/keyframes/model",
+                request_digest=self.task.decision_gate_contracts[0].request_digest,
+                policy_version="companyos-policy-v1",
+                decision="approved",
+                ttl_seconds=600,
+            )
 
     def test_runtime_persists_and_revalidates_complete_dependency_graph(self) -> None:
         dependent_data = program_packet(self.project, "afs-release")
