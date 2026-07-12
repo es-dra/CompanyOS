@@ -362,6 +362,13 @@ class AdapterConformanceTests(unittest.TestCase):
 
 
 class ContinuousIntegrationContractTests(unittest.TestCase):
+    def test_installers_copy_required_dotfile_contracts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for installer in ("install.ps1", "install.sh"):
+            with self.subTest(installer=installer):
+                content = (root / installer).read_text(encoding="utf-8")
+                self.assertIn(".gitattributes", content)
+
     def test_ci_covers_both_platforms_and_all_local_gates(self) -> None:
         workflow = (
             Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
