@@ -14,8 +14,10 @@ from .authority import (
     ProjectSpec,
 )
 from .authority_compiler import (
+    CurrentProgramStateProvider,
     compile_program,
     validate_goal_authority,
+    validate_program_graph,
     validate_task_authority,
 )
 from .errors import ContractError, NotFoundError, TransitionError
@@ -57,8 +59,11 @@ class RuntimeKernel:
         policy_version: str = "companyos-policy-v1",
         identity: IdentityManager | None = None,
         authority_spines: Mapping[
-            str, tuple[ProjectSpec, ProgramSpec]
+            str,
+            tuple[ProjectSpec, ProgramSpec]
+            | tuple[ProjectSpec, ProgramSpec, tuple[ProgramSpec, ...]],
         ] | None = None,
+        current_program_state_provider: CurrentProgramStateProvider | None = None,
     ):
         self.store = store
         self.__command_authority = store._bind_core_command_authority(
@@ -67,23 +72,42 @@ class RuntimeKernel:
         self.policy_version = policy_version
         self.guards = GuardResolver()
         self.identity = identity or IdentityManager(store)
-        self._authority_spines: dict[str, tuple[ProjectSpec, ProgramSpec]] = {}
+        self._authority_spines: dict[
+            str, tuple[ProjectSpec, ProgramSpec, tuple[ProgramSpec, ...]]
+        ] = {}
         self._authority_goal_bindings: dict[str, CompiledGoalAuthority] = {}
         for project_id, binding in (authority_spines or {}).items():
             if (
                 not isinstance(binding, tuple)
-                or len(binding) != 2
+                or len(binding) not in {2, 3}
                 or type(binding[0]) is not ProjectSpec
                 or type(binding[1]) is not ProgramSpec
             ):
                 raise ContractError(
-                    "authority_spines values must be exact (ProjectSpec, ProgramSpec) tuples"
+                    "authority_spines values must be exact (ProjectSpec, ProgramSpec[, graph]) tuples"
                 )
             project = ProjectSpec.from_dict(binding[0].to_dict())
             if project_id != project.project_id:
                 raise ContractError("authority_spines key must match ProjectSpec.project_id")
-            program = compile_program(binding[1].to_dict(), project=project)
-            self._authority_spines[project_id] = (project, program)
+            if len(binding) == 3:
+                raw_graph = binding[2]
+                if type(raw_graph) is not tuple or any(
+                    type(item) is not ProgramSpec for item in raw_graph
+                ):
+                    raise ContractError("authority Program graph must be an exact ProgramSpec tuple")
+                graph = tuple(ProgramSpec.from_dict(item.to_dict()) for item in raw_graph)
+            else:
+                graph = (ProgramSpec.from_dict(binding[1].to_dict()),)
+            validate_program_graph(project, graph)
+            program = compile_program(
+                binding[1].to_dict(),
+                project=project,
+                program_graph=graph if binding[1].dependency_refs else None,
+                current_state_provider=current_program_state_provider,
+            )
+            if program.reference() not in {item.reference() for item in graph}:
+                raise ContractError("authority Program graph omits the current Program")
+            self._authority_spines[project_id] = (project, program, graph)
 
     def _actor_id(self, actor: VerifiedPrincipal, allowed_roles: set[Role]) -> str:
         principal = self.identity.verify(actor)
@@ -118,26 +142,97 @@ class RuntimeKernel:
     def initialize(self) -> None:
         self.store.initialize()
         with self.store.transaction(immediate=True) as connection:
-            for project_id, (project, program) in self._authority_spines.items():
+            for project_id, (project, program, graph) in self._authority_spines.items():
                 existing = connection.execute(
                     "SELECT * FROM adopted_projects WHERE project_id = ?", (project_id,)
                 ).fetchone()
                 project_json = canonical_json(project.to_dict())
-                program_json = canonical_json(program.to_dict())
-                graph_digest = content_hash([program.reference().to_dict()])
+                graph_refs = [
+                    item.reference().to_dict()
+                    for item in sorted(graph, key=lambda item: (item.wave, item.program_id))
+                ]
+                graph_digest = content_hash(graph_refs)
+                project_payload = {
+                    "project_spec": project.to_dict(),
+                    "current_program_id": program.program_id,
+                }
+                authority_events: list[tuple[str, str, str, dict[str, Any]]] = [
+                    (
+                        "project_authority",
+                        project.project_id,
+                        "project_authority_adopted",
+                        project_payload,
+                    ),
+                ]
+                authority_events.extend(
+                    (
+                        "program_authority",
+                        item.program_id,
+                        "program_authority_adopted",
+                        {
+                            "program_spec": item.to_dict(),
+                            "graph_refs": graph_refs,
+                            "graph_digest": graph_digest,
+                        },
+                    )
+                    for item in graph
+                )
+                for aggregate_type, aggregate_id, event_type, payload in authority_events:
+                    event = connection.execute(
+                        "SELECT payload_json FROM events WHERE aggregate_type = ? "
+                        "AND aggregate_id = ? AND aggregate_version = 1",
+                        (aggregate_type, aggregate_id),
+                    ).fetchone()
+                    if event is None:
+                        self.store.append_event(
+                            connection,
+                            aggregate_type=aggregate_type,
+                            aggregate_id=aggregate_id,
+                            expected_version=0,
+                            project_id=project_id,
+                            event_type=event_type,
+                            actor="system",
+                            command_id=self._command_id(),
+                            correlation_id=project_id,
+                            policy_version=self.policy_version,
+                            payload=payload,
+                            command_authority=self.__command_authority,
+                            command_owner=self,
+                        )
+                    elif json.loads(event["payload_json"]) != payload:
+                        raise ContractError(
+                            "persisted authority adoption event conflicts with configuration"
+                        )
                 if existing is not None:
                     if (
-                        existing["digest"] != project.reference().digest
+                        int(existing["version"]) != project.version
+                        or existing["digest"] != project.reference().digest
                         or existing["current_program_id"] != program.program_id
                     ):
                         raise ContractError("persisted adopted Project authority conflicts with configuration")
-                    current = connection.execute(
-                        "SELECT digest, state, graph_digest FROM adopted_programs WHERE program_id = ?",
-                        (program.program_id,),
-                    ).fetchone()
-                    if current is None or (
-                        current["digest"], current["state"], current["graph_digest"]
-                    ) != (program.reference().digest, program.state.value, graph_digest):
+                    current_rows = list(connection.execute(
+                        "SELECT program_id, version, digest, state, graph_digest, spec_json "
+                        "FROM adopted_programs WHERE project_id = ?",
+                        (project_id,),
+                    ))
+                    expected = {
+                        item.program_id: (
+                            item.version,
+                            item.reference().digest,
+                            item.state.value,
+                            graph_digest,
+                            canonical_json(item.to_dict()),
+                        )
+                        for item in graph
+                    }
+                    actual = {
+                        row["program_id"]: (
+                            int(row["version"]), row["digest"], row["state"],
+                            row["graph_digest"], row["spec_json"],
+                        )
+                        for row in current_rows
+                    }
+                    if actual != expected:
                         raise ContractError("persisted current Program authority conflicts with configuration")
                     continue
                 now = utc_now()
@@ -145,35 +240,62 @@ class RuntimeKernel:
                     "INSERT INTO adopted_projects(project_id, version, digest, spec_json, current_program_id, adopted_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (project_id, project.version, project.reference().digest, project_json, program.program_id, now),
                 )
-                connection.execute(
-                    "INSERT INTO adopted_programs(program_id, project_id, version, digest, state, graph_digest, spec_json, adopted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (program.program_id, project_id, program.version, program.reference().digest, program.state.value, graph_digest, program_json, now),
-                )
+                for item in graph:
+                    connection.execute(
+                        "INSERT INTO adopted_programs(program_id, project_id, version, digest, state, graph_digest, spec_json, adopted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (item.program_id, project_id, item.version, item.reference().digest, item.state.value, graph_digest, canonical_json(item.to_dict()), now),
+                    )
 
     def _persisted_authority_spine(
         self, project_id: str
-    ) -> tuple[ProjectSpec, ProgramSpec] | None:
+    ) -> tuple[ProjectSpec, ProgramSpec, tuple[ProgramSpec, ...]] | None:
         with self.store.transaction() as connection:
             project_row = connection.execute(
                 "SELECT * FROM adopted_projects WHERE project_id = ?", (project_id,)
             ).fetchone()
             if project_row is None:
                 return None
-            program_row = connection.execute(
-                "SELECT * FROM adopted_programs WHERE project_id = ? AND program_id = ?",
-                (project_id, project_row["current_program_id"]),
-            ).fetchone()
+            program_rows = list(connection.execute(
+                "SELECT * FROM adopted_programs WHERE project_id = ? ORDER BY program_id",
+                (project_id,),
+            ))
+            program_row = next(
+                (row for row in program_rows if row["program_id"] == project_row["current_program_id"]),
+                None,
+            )
             if program_row is None:
                 raise ContractError("adopted Project current Program projection is missing")
             project = ProjectSpec.from_dict(json.loads(project_row["spec_json"]))
-            program = ProgramSpec.from_dict(json.loads(program_row["spec_json"]))
+            graph = tuple(
+                ProgramSpec.from_dict(json.loads(row["spec_json"])) for row in program_rows
+            )
+            program = next(item for item in graph if item.program_id == program_row["program_id"])
+            graph_refs = [
+                item.reference().to_dict()
+                for item in sorted(graph, key=lambda item: (item.wave, item.program_id))
+            ]
+            expected_graph_digest = content_hash(graph_refs)
+            validate_program_graph(project, graph)
             if (
-                project.reference().digest != project_row["digest"]
+                int(project_row["version"]) != project.version
+                or int(program_row["version"]) != program.version
+                or project.reference().digest != project_row["digest"]
                 or program.reference().digest != program_row["digest"]
                 or program.state.value != program_row["state"]
+                or program_row["graph_digest"] != expected_graph_digest
+                or program.project_ref != project.reference()
+                or any(
+                    int(row["version"]) != item.version
+                    or row["digest"] != item.reference().digest
+                    or row["state"] != item.state.value
+                    or row["graph_digest"] != expected_graph_digest
+                    for row, item in zip(program_rows, graph)
+                )
             ):
                 raise ContractError("persisted authority registry digest/state mismatch")
-            return project, program
+            if program.state.terminal:
+                raise ContractError("persisted current Program is terminal")
+            return project, program, graph
 
     @staticmethod
     def _command_id() -> str:
@@ -281,7 +403,10 @@ class RuntimeKernel:
                     "authority-enabled project requires CompiledGoalAuthority"
                 )
             canonical_authority = validate_goal_authority(
-                compiled_authority, project=spine[0], program=spine[1]
+                compiled_authority,
+                project=spine[0],
+                program=spine[1],
+                program_graph=spine[2] if spine[1].dependency_refs else None,
             )
             if canonical_authority.goal_spec != spec:
                 raise ContractError(
@@ -502,6 +627,7 @@ class RuntimeKernel:
                 project=spine[0],
                 program=spine[1],
                 goal=goal_authority,
+                program_graph=spine[2] if spine[1].dependency_refs else None,
             )
             if canonical_task_authority.task_spec != spec:
                 raise ContractError(
@@ -965,6 +1091,12 @@ class RuntimeKernel:
             if not evidence_ok or not evaluator_ok:
                 raise TransitionError(
                     "task evidence/evaluator requirements are not satisfied"
+                )
+            from .policy import _required_decision_gates_satisfied
+
+            if not _required_decision_gates_satisfied(connection, task_id):
+                raise TransitionError(
+                    "compiled Task required decision gates are not satisfied"
                 )
             spec = TaskSpec.from_dict(json.loads(row["spec_json"]))
             declared_steps = {step["step_id"] for step in spec.workflow_steps}

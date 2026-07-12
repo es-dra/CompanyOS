@@ -1,6 +1,6 @@
 """SQLite schema for the single-host durable runtime implementation."""
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 DDL = r"""
 PRAGMA foreign_keys = ON;
@@ -261,6 +261,9 @@ CREATE TABLE IF NOT EXISTS approvals (
     action TEXT NOT NULL,
     resource TEXT NOT NULL,
     request_digest TEXT NOT NULL,
+    authority_binding_digest TEXT,
+    authority_binding_version INTEGER,
+    decision_gate TEXT,
     policy_version TEXT NOT NULL,
     decision TEXT NOT NULL,
     requested_at TEXT NOT NULL,

@@ -184,7 +184,7 @@ class EventStoreTests(unittest.TestCase):
         raw_connection = sqlite3.connect(self.database_path)
         try:
             raw_connection.execute("DROP TRIGGER events_authorized_insert")
-            raw_connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            raw_connection.execute("DELETE FROM schema_migrations WHERE version = 6")
             raw_connection.execute(
                 "INSERT OR REPLACE INTO schema_migrations(version, applied_at, checksum) "
                 "VALUES (3, '2026-01-01T00:00:00+00:00', 'legacy-v3-checksum')"
@@ -195,13 +195,13 @@ class EventStoreTests(unittest.TestCase):
 
         self.store.initialize()
         migration = self.store.query(
-            "SELECT version FROM schema_migrations WHERE version = 5"
+            "SELECT version FROM schema_migrations WHERE version = 6"
         )
         trigger = self.store.query(
             "SELECT name FROM sqlite_master WHERE type = 'trigger' "
             "AND name = 'events_authorized_insert'"
         )
-        self.assertEqual(migration, [{"version": 5}])
+        self.assertEqual(migration, [{"version": 6}])
         self.assertEqual(trigger, [{"name": "events_authorized_insert"}])
 
         connection = self.store.connect()
