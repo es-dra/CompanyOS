@@ -2012,6 +2012,9 @@ class EvaluationRegistry:
             "request_digest": approval["request_digest"],
             "decision": approval["decision"],
             "expires_at": approval["expires_at"],
+            "authority_binding_digest": approval["authority_binding_digest"],
+            "authority_binding_version": approval["authority_binding_version"],
+            "decision_gate": approval["decision_gate"],
         }
         self.store._verify_protected_event_authority(
             event,

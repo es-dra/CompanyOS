@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .authority import CompiledGoalAuthority, CompiledTaskAuthority, ProgramSpec, ProjectSpec
 from .errors import IntegrityError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .state_machine import apply_loop_event, require_transition
@@ -18,6 +19,7 @@ from .types import (
     TaskSpec,
     TaskState,
     canonical_json,
+    content_hash,
 )
 
 
@@ -67,6 +69,10 @@ class ReplayResult:
     goals: dict[str, dict[str, Any]]
     runs: dict[str, dict[str, Any]]
     tasks: dict[str, dict[str, Any]]
+    projects: dict[str, dict[str, Any]]
+    programs: dict[str, dict[str, Any]]
+    goal_authorities: dict[str, dict[str, Any]]
+    task_authorities: dict[str, dict[str, Any]]
 
 
 class ProjectionReplayer:
@@ -99,10 +105,17 @@ class ProjectionReplayer:
         goals: dict[str, dict[str, Any]] = {}
         runs: dict[str, dict[str, Any]] = {}
         tasks: dict[str, dict[str, Any]] = {}
+        projects: dict[str, dict[str, Any]] = {}
+        programs: dict[str, dict[str, Any]] = {}
+        goal_authorities: dict[str, dict[str, Any]] = {}
+        task_authorities: dict[str, dict[str, Any]] = {}
         versions: dict[tuple[str, str], int] = {}
         for row in rows:
             aggregate_type = row["aggregate_type"]
-            if aggregate_type not in {"goal", "run", "task"}:
+            if aggregate_type not in {
+                "goal", "run", "task", "project_authority", "program_authority",
+                "goal_authority", "task_authority",
+            }:
                 continue
             key = (aggregate_type, row["aggregate_id"])
             expected = versions.get(key, 0) + 1
@@ -112,13 +125,143 @@ class ProjectionReplayer:
                 )
             versions[key] = expected
             payload = json.loads(row["payload_json"])
-            if aggregate_type == "goal":
+            if aggregate_type == "project_authority":
+                self._apply_project_authority(projects, row, payload)
+            elif aggregate_type == "program_authority":
+                self._apply_program_authority(programs, projects, row, payload)
+            elif aggregate_type == "goal_authority":
+                self._apply_goal_authority(goal_authorities, projects, programs, row, payload)
+            elif aggregate_type == "task_authority":
+                self._apply_task_authority(
+                    task_authorities, goal_authorities, projects, programs, row, payload
+                )
+            elif aggregate_type == "goal":
                 self._apply_goal(goals, row, payload)
             elif aggregate_type == "run":
                 self._apply_run(runs, goals, row, payload)
             else:
                 self._apply_task(tasks, goals, runs, row, payload)
-        return ReplayResult(goals=goals, runs=runs, tasks=tasks)
+        return ReplayResult(
+            goals=goals,
+            runs=runs,
+            tasks=tasks,
+            projects=projects,
+            programs=programs,
+            goal_authorities=goal_authorities,
+            task_authorities=task_authorities,
+        )
+
+    @staticmethod
+    def _apply_project_authority(
+        projects: dict[str, dict[str, Any]], row: dict[str, Any], payload: dict[str, Any]
+    ) -> None:
+        project_id = row["aggregate_id"]
+        if row["event_type"] != "project_authority_adopted" or project_id in projects:
+            raise IntegrityError(f"unsupported or duplicate Project authority event: {project_id}")
+        if set(payload) != {"project_spec", "current_program_id"}:
+            raise IntegrityError("Project authority event payload is invalid")
+        project = ProjectSpec.from_dict(payload["project_spec"])
+        if project.project_id != project_id:
+            raise IntegrityError("Project authority aggregate and payload identifiers differ")
+        projects[project_id] = {
+            "project_id": project_id,
+            "version": project.version,
+            "digest": project.reference().digest,
+            "spec_json": canonical_json(project.to_dict()),
+            "current_program_id": payload["current_program_id"],
+        }
+
+    @staticmethod
+    def _apply_program_authority(
+        programs: dict[str, dict[str, Any]],
+        projects: dict[str, dict[str, Any]],
+        row: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        program_id = row["aggregate_id"]
+        if row["event_type"] != "program_authority_adopted" or program_id in programs:
+            raise IntegrityError(f"unsupported or duplicate Program authority event: {program_id}")
+        if set(payload) != {"program_spec", "graph_refs", "graph_digest"}:
+            raise IntegrityError("Program authority event payload is invalid")
+        program = ProgramSpec.from_dict(payload["program_spec"])
+        if program.program_id != program_id or program.project_ref.object_id not in projects:
+            raise IntegrityError("Program authority event has a missing/mismatched Project")
+        graph_refs = payload["graph_refs"]
+        if not isinstance(graph_refs, list) or payload["graph_digest"] != content_hash(graph_refs):
+            raise IntegrityError("Program authority graph digest is invalid")
+        if program.reference().to_dict() not in graph_refs:
+            raise IntegrityError("Program authority graph omits the adopted Program")
+        programs[program_id] = {
+            "program_id": program_id,
+            "project_id": program.project_ref.object_id,
+            "version": program.version,
+            "digest": program.reference().digest,
+            "state": program.state.value,
+            "graph_digest": payload["graph_digest"],
+            "spec_json": canonical_json(program.to_dict()),
+        }
+
+    @staticmethod
+    def _apply_goal_authority(
+        authorities: dict[str, dict[str, Any]],
+        projects: dict[str, dict[str, Any]],
+        programs: dict[str, dict[str, Any]],
+        row: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        goal_id = row["aggregate_id"]
+        if row["event_type"] != "goal_authority_bound" or goal_id in authorities:
+            raise IntegrityError(f"unsupported or duplicate Goal authority event: {goal_id}")
+        authority = CompiledGoalAuthority.from_dict(payload)
+        if (
+            authority.goal_spec.goal_id != goal_id
+            or authority.project_ref.object_id not in projects
+            or authority.program_ref.object_id not in programs
+        ):
+            raise IntegrityError("Goal authority event has stale parent references")
+        authorities[goal_id] = {
+            "goal_id": goal_id,
+            "project_id": authority.project_ref.object_id,
+            "program_id": authority.program_ref.object_id,
+            "authority_digest": content_hash(authority.to_dict()),
+            "authority_json": canonical_json(authority.to_dict()),
+            "source_event_id": row["event_id"],
+        }
+
+    @staticmethod
+    def _apply_task_authority(
+        authorities: dict[str, dict[str, Any]],
+        goals: dict[str, dict[str, Any]],
+        projects: dict[str, dict[str, Any]],
+        programs: dict[str, dict[str, Any]],
+        row: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        task_id = row["aggregate_id"]
+        if row["event_type"] != "task_authority_bound" or task_id in authorities:
+            raise IntegrityError(f"unsupported or duplicate Task authority event: {task_id}")
+        authority = CompiledTaskAuthority.from_dict(payload)
+        if (
+            authority.task_spec.task_id != task_id
+            or authority.goal_ref.object_id not in goals
+            or authority.project_ref.object_id not in projects
+            or authority.program_ref.object_id not in programs
+        ):
+            raise IntegrityError("Task authority event has stale parent references")
+        authorities[task_id] = {
+            "task_id": task_id,
+            "project_id": authority.project_ref.object_id,
+            "program_id": authority.program_ref.object_id,
+            "goal_id": authority.goal_ref.object_id,
+            "authority_digest": content_hash(authority.to_dict()),
+            "authority_json": canonical_json(authority.to_dict()),
+            "provider_budget_minor_units": authority.provider_budget_minor_units,
+            "provider_call_limit": authority.provider_call_limit,
+            "required_decision_gates_json": canonical_json(
+                list(authority.required_decision_gates)
+            ),
+            "source_event_id": row["event_id"],
+        }
 
     @staticmethod
     def _apply_goal(
@@ -270,6 +413,38 @@ class ProjectionReplayer:
     def _verify_projections_in_transaction(
         self, connection: Any, replayed: ReplayResult
     ) -> None:
+        self._verify_table(
+            connection,
+            "adopted_projects",
+            "project_id",
+            replayed.projects,
+            ("version", "digest", "spec_json", "current_program_id"),
+        )
+        self._verify_table(
+            connection,
+            "adopted_programs",
+            "program_id",
+            replayed.programs,
+            ("project_id", "version", "digest", "state", "graph_digest", "spec_json"),
+        )
+        self._verify_table(
+            connection,
+            "goal_authority_bindings",
+            "goal_id",
+            replayed.goal_authorities,
+            ("project_id", "program_id", "authority_digest", "authority_json", "source_event_id"),
+        )
+        self._verify_table(
+            connection,
+            "task_authority_bindings",
+            "task_id",
+            replayed.task_authorities,
+            (
+                "project_id", "program_id", "goal_id", "authority_digest", "authority_json",
+                "provider_budget_minor_units", "provider_call_limit",
+                "required_decision_gates_json", "source_event_id",
+            ),
+        )
         self._verify_table(
             connection,
             "goals",

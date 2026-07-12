@@ -483,6 +483,18 @@ class SQLiteStore:
                     )
             connection.executescript("BEGIN IMMEDIATE;\n" + DDL + "\nCOMMIT;")
             connection.execute("BEGIN IMMEDIATE")
+            approval_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(approvals)")
+            }
+            for name, declaration in (
+                ("authority_binding_digest", "TEXT"),
+                ("authority_binding_version", "INTEGER"),
+                ("decision_gate", "TEXT"),
+            ):
+                if name not in approval_columns:
+                    connection.execute(
+                        f"ALTER TABLE approvals ADD COLUMN {name} {declaration}"
+                    )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at, checksum) VALUES (?, ?, ?)",
                 (SCHEMA_VERSION, utc_now(), checksum),

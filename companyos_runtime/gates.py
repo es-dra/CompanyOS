@@ -42,23 +42,9 @@ _DECISION_GATE_CAPABILITIES = {
 
 
 def _decision_gates_satisfied(connection: Any, task_id: str) -> bool:
-    row = connection.execute(
-        "SELECT required_decision_gates_json FROM task_authority_bindings WHERE task_id = ?",
-        (task_id,),
-    ).fetchone()
-    if row is None:
-        return True
-    for gate in json.loads(row["required_decision_gates_json"]):
-        capability = _DECISION_GATE_CAPABILITIES.get(gate)
-        clause = "capability = ?" if capability is not None else "action = ?"
-        value = capability if capability is not None else gate
-        if connection.execute(
-            f"SELECT 1 FROM approvals WHERE task_id = ? AND {clause} "
-            "AND decision = 'approved' AND julianday(expires_at) > julianday('now') LIMIT 1",
-            (task_id, value),
-        ).fetchone() is None:
-            return False
-    return True
+    from .policy import _required_decision_gates_satisfied
+
+    return _required_decision_gates_satisfied(connection, task_id)
 
 
 class GuardResolver:

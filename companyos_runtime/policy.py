@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
+from .authority import CompiledTaskAuthority
 from .errors import AuthorizationError, ContractError
 from .identity import IdentityManager, Role, VerifiedPrincipal
 from .scope import scope_allowed, scopes_overlap, validate_task_within_goal
@@ -24,22 +25,61 @@ _DECISION_GATE_CAPABILITIES = {
 }
 
 
-def _required_decision_gates_satisfied(connection: Any, task_id: str) -> bool:
+def _required_decision_gates_satisfied(
+    connection: Any,
+    task_id: str,
+    *,
+    required_gates: tuple[str, ...] | None = None,
+    exact_request: tuple[str, str, str, str] | None = None,
+) -> bool:
     binding = connection.execute(
-        "SELECT required_decision_gates_json FROM task_authority_bindings WHERE task_id = ?",
+        "SELECT required_decision_gates_json, authority_digest, authority_json, project_id "
+        "FROM task_authority_bindings WHERE task_id = ?",
         (task_id,),
     ).fetchone()
     if binding is None:
         return True
-    gates = json.loads(binding["required_decision_gates_json"])
-    for gate in gates:
+    try:
+        authority = CompiledTaskAuthority.from_dict(json.loads(binding["authority_json"]))
+        gates = json.loads(binding["required_decision_gates_json"])
+    except (ContractError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        authority.task_spec.task_id != task_id
+        or authority.project_ref.object_id != binding["project_id"]
+        or content_hash(authority.to_dict()) != binding["authority_digest"]
+        or list(authority.required_decision_gates) != gates
+    ):
+        return False
+    binding_version = authority.version
+    gates_to_check = tuple(required_gates) if required_gates is not None else tuple(gates)
+    if any(gate not in gates for gate in gates_to_check):
+        return False
+    for gate in gates_to_check:
         capability = _DECISION_GATE_CAPABILITIES.get(gate)
         clause = "capability = ?" if capability is not None else "action = ?"
         value = capability if capability is not None else gate
+        exact_clause = ""
+        parameters: list[Any] = [
+            task_id,
+            binding["project_id"],
+            value,
+            gate,
+            binding["authority_digest"],
+            binding_version,
+        ]
+        if exact_request is not None:
+            exact_clause = (
+                "AND capability = ? AND action = ? AND resource = ? AND request_digest = ? "
+            )
+            parameters.extend(exact_request)
         approved = connection.execute(
-            f"SELECT 1 FROM approvals WHERE task_id = ? AND {clause} "
+            f"SELECT 1 FROM approvals WHERE task_id = ? AND project_id = ? AND {clause} "
+            "AND decision_gate = ? AND authority_binding_digest = ? "
+            "AND authority_binding_version = ? AND request_digest != '' "
+            f"{exact_clause}"
             "AND decision = 'approved' AND julianday(expires_at) > julianday('now') LIMIT 1",
-            (task_id, value),
+            tuple(parameters),
         ).fetchone()
         if approved is None:
             return False
@@ -653,6 +693,22 @@ class PolicyEngine:
             )
             now = self._now(connection)
             expires_at = self._expires(connection, ttl_seconds)
+            authority_binding = connection.execute(
+                "SELECT authority_digest, authority_json, required_decision_gates_json "
+                "FROM task_authority_bindings WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            binding_digest = None
+            binding_version = None
+            decision_gate = None
+            if authority_binding is not None:
+                required_gates = json.loads(authority_binding["required_decision_gates_json"])
+                for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items():
+                    if gate_capability == capability_value and gate in required_gates:
+                        decision_gate = gate
+                        break
+                binding_digest = authority_binding["authority_digest"]
+                binding_version = json.loads(authority_binding["authority_json"])["version"]
             self.store.append_event(
                 connection,
                 aggregate_type="approval",
@@ -674,6 +730,9 @@ class PolicyEngine:
                     "request_digest": request_digest,
                     "decision": decision,
                     "expires_at": expires_at,
+                    "authority_binding_digest": binding_digest,
+                    "authority_binding_version": binding_version,
+                    "decision_gate": decision_gate,
                 },
                 command_authority=self.__command_authority,
                 command_owner=self,
@@ -683,9 +742,10 @@ class PolicyEngine:
                 INSERT INTO approvals(
                     approval_id, project_id, goal_id, run_id, task_id,
                     requester, approver, capability, action, resource,
-                    request_digest, policy_version, decision, requested_at,
+                    request_digest, authority_binding_digest, authority_binding_version,
+                    decision_gate, policy_version, decision, requested_at,
                     decided_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
@@ -699,6 +759,9 @@ class PolicyEngine:
                     action,
                     resource,
                     request_digest,
+                    binding_digest,
+                    binding_version,
+                    decision_gate,
                     policy_version,
                     decision,
                     now,
@@ -787,8 +850,20 @@ class PolicyEngine:
             ).fetchone()[0]
             if active != 1:
                 raise AuthorizationError(f"approval has expired: {approval_id}")
+            matching_gate = next(
+                (
+                    gate
+                    for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items()
+                    if gate_capability == capability_value
+                ),
+                None,
+            )
+            required_gates = (matching_gate,) if matching_gate is not None else ()
             if not _required_decision_gates_satisfied(
-                connection, approval["task_id"]
+                connection,
+                approval["task_id"],
+                required_gates=required_gates,
+                exact_request=(capability_value, action, resource, request_digest),
             ):
                 raise AuthorizationError(
                     "compiled Task required decision gates are not satisfied"
@@ -1314,7 +1389,21 @@ class PolicyEngine:
             self._assert_task_lifecycle(
                 task_scope, capability=capability_value, phase="consume"
             )
-            if not _required_decision_gates_satisfied(connection, task_id):
+            matching_gate = next(
+                (
+                    gate
+                    for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items()
+                    if gate_capability == capability_value
+                ),
+                None,
+            )
+            required_gates = (matching_gate,) if matching_gate is not None else ()
+            if not _required_decision_gates_satisfied(
+                connection,
+                task_id,
+                required_gates=required_gates,
+                exact_request=(capability_value, action, resource, request_digest),
+            ):
                 raise AuthorizationError(
                     "compiled Task required decision gates are not satisfied"
                 )

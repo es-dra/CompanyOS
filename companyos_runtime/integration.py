@@ -388,6 +388,14 @@ class IntegrationQueue:
             existing_refs = tuple(json.loads(row["evidence_refs_json"]))
             all_refs = tuple(dict.fromkeys((*existing_refs, *refs)))
             if target_state in _FINAL:
+                from .policy import _required_decision_gates_satisfied
+
+                if not _required_decision_gates_satisfied(
+                    connection, row["task_id"]
+                ):
+                    raise TransitionError(
+                        "compiled Task required decision gates are not satisfied"
+                    )
                 if not all_refs:
                     raise EvidenceError(
                         "final integration state requires evidence references"

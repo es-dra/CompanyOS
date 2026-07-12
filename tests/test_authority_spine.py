@@ -23,8 +23,9 @@ from companyos_runtime.authority_compiler import (
     compile_task_authority,
     validate_program_graph,
 )
-from companyos_runtime.errors import ContractError
+from companyos_runtime.errors import ContractError, IntegrityError
 from companyos_runtime.kernel import RuntimeKernel
+from companyos_runtime.replay import ProjectionReplayer
 from companyos_runtime.store import SQLiteStore
 from tests.identity_fixtures import IdentityFixture
 
@@ -536,6 +537,76 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 actor=self.identities.owner,
                 idempotency_key="omitted-spine",
             )
+
+    def test_persisted_registry_version_and_graph_tamper_fail_closed(self) -> None:
+        for column, value in (("version", 999), ("graph_digest", "0" * 64)):
+            with self.subTest(column=column):
+                with self.store.transaction(immediate=True) as connection:
+                    original = connection.execute(
+                        f"SELECT {column} FROM adopted_programs WHERE program_id = ?",
+                        (self.program.program_id,),
+                    ).fetchone()[column]
+                    connection.execute(
+                        f"UPDATE adopted_programs SET {column} = ? WHERE program_id = ?",
+                        (value, self.program.program_id),
+                    )
+                with self.assertRaisesRegex(ContractError, "digest/state mismatch"):
+                    RuntimeKernel(self.store)._persisted_authority_spine("afs")
+                with self.store.transaction(immediate=True) as connection:
+                    connection.execute(
+                        f"UPDATE adopted_programs SET {column} = ? WHERE program_id = ?",
+                        (original, self.program.program_id),
+                    )
+
+    def test_authority_registry_and_bindings_replay_from_events(self) -> None:
+        self.kernel.create_goal(
+            project_id="afs",
+            spec=self.goal.goal_spec,
+            compiled_authority=self.goal,
+            actor=self.identities.owner,
+            idempotency_key="goal-for-authority-replay",
+        )
+        self.kernel.add_task(
+            project_id="afs",
+            spec=self.task.task_spec,
+            compiled_authority=self.task,
+            actor=self.identities.system,
+            idempotency_key="task-for-authority-replay",
+        )
+        replayed = ProjectionReplayer(self.store).verify()
+        self.assertEqual(set(replayed.projects), {"afs"})
+        self.assertEqual(set(replayed.programs), {"afs-core"})
+        self.assertEqual(set(replayed.goal_authorities), {"goal-core"})
+        self.assertEqual(set(replayed.task_authorities), {"task-core"})
+
+        with self.store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE task_authority_bindings SET authority_digest = ? WHERE task_id = ?",
+                ("0" * 64, "task-core"),
+            )
+        with self.assertRaisesRegex(IntegrityError, "projection mismatch"):
+            ProjectionReplayer(self.store).verify()
+
+    def test_runtime_persists_and_revalidates_complete_dependency_graph(self) -> None:
+        dependent_data = program_packet(self.project, "afs-release")
+        dependent_data["wave"] = 1
+        dependent_data["dependency_refs"] = [self.program.reference().to_dict()]
+        dependent = ProgramSpec.from_dict(dependent_data)
+        graph = (self.program, dependent)
+        store = SQLiteStore(Path(self.temp.name) / "graph-runtime.db")
+        kernel = RuntimeKernel(
+            store,
+            authority_spines={"afs": (self.project, dependent, graph)},
+        )
+        kernel.initialize()
+        persisted = RuntimeKernel(store)._persisted_authority_spine("afs")
+        self.assertIsNotNone(persisted)
+        assert persisted is not None
+        self.assertEqual(persisted[1].reference(), dependent.reference())
+        self.assertEqual(
+            {item.reference() for item in persisted[2]},
+            {item.reference() for item in graph},
+        )
 
 
 if __name__ == "__main__":
