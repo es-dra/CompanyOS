@@ -28,6 +28,7 @@ from companyos_runtime.authority_compiler import (
 from companyos_runtime.errors import AuthorizationError, ContractError, IntegrityError
 from companyos_runtime.evidence import EvidenceRegistry
 from companyos_runtime.integration import IntegrationQueue
+from companyos_runtime.identity import Role
 from companyos_runtime.kernel import RuntimeKernel
 from companyos_runtime.observations import ObservationRegistry
 from companyos_runtime.policy import PolicyEngine, _required_decision_gates_satisfied
@@ -1366,6 +1367,124 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 policy_version="companyos-policy-v1",
                 decision="approved",
                 ttl_seconds=600,
+            )
+
+    def test_non_gate_requests_do_not_inherit_capability_decision_gate(self) -> None:
+        run_id = self._create_bound_running_task()
+        policy = PolicyEngine(self.store)
+        cases = (
+            (
+                "repo",
+                Capability.REPO_REMOTE,
+                "open_pr",
+                "repo://afs/worktrees/core/api/path.py",
+                0,
+                self.identities.worker,
+            ),
+            (
+                "provider",
+                Capability.PROVIDER_COST,
+                "invoke",
+                "provider://afs/image/keyframes/model",
+                1,
+                self.identities.worker,
+            ),
+            (
+                "release",
+                Capability.PUBLIC_RELEASE,
+                "publish",
+                "release://afs/core/v1",
+                0,
+                self.identities.session("release-worker", Role.RELEASE),
+            ),
+        )
+        for label, capability, action, resource, cost, principal in cases:
+            with self.subTest(label=label):
+                request_digest = content_hash(
+                    {"operation": action, "case": f"non-gate-{label}"}
+                )
+                approval = policy.record_approval(
+                    project_id="afs",
+                    goal_id=self.goal.goal_spec.goal_id,
+                    run_id=run_id,
+                    task_id=self.task.task_spec.task_id,
+                    requester=principal,
+                    approver=self.identities.owner,
+                    capability=capability,
+                    action=action,
+                    resource=resource,
+                    request_digest=request_digest,
+                    policy_version="companyos-policy-v1",
+                    decision="approved",
+                    ttl_seconds=600,
+                    approval_id=f"approval-non-gate-{label}",
+                )
+                grant = policy.issue_grant(
+                    approval_id=approval.approval_id,
+                    issuer=self.identities.owner,
+                    principal=principal,
+                    capability=capability,
+                    action=action,
+                    resource=resource,
+                    request_digest=request_digest,
+                    policy_version="companyos-policy-v1",
+                    ttl_seconds=300,
+                    max_uses=1,
+                    cost_limit=cost,
+                    grant_id=f"grant-non-gate-{label}",
+                )
+                usage = policy.consume(
+                    grant.grant_id,
+                    project_id="afs",
+                    goal_id=self.goal.goal_spec.goal_id,
+                    run_id=run_id,
+                    task_id=self.task.task_spec.task_id,
+                    principal=principal,
+                    capability=capability,
+                    action=action,
+                    resource=resource,
+                    request_digest=request_digest,
+                    idempotency_key=f"consume-non-gate-{label}",
+                    cost=cost,
+                    effect_id=f"effect-non-gate-{label}",
+                )
+                self.assertEqual(usage.request_digest, request_digest)
+
+        merge_contract = next(
+            contract
+            for contract in self.task.decision_gate_contracts
+            if contract.gate_id == "merge"
+        )
+        wrong_digest = content_hash("wrong-exact-merge-request")
+        approval = policy.record_approval(
+            project_id="afs",
+            goal_id=self.goal.goal_spec.goal_id,
+            run_id=run_id,
+            task_id=self.task.task_spec.task_id,
+            requester=self.identities.worker,
+            approver=self.identities.owner,
+            capability=merge_contract.capability,
+            action=merge_contract.action,
+            resource=merge_contract.resource,
+            request_digest=wrong_digest,
+            policy_version="companyos-policy-v1",
+            decision="approved",
+            ttl_seconds=600,
+            approval_id="approval-wrong-exact-merge",
+        )
+        with self.assertRaisesRegex(AuthorizationError, "decision gates"):
+            policy.issue_grant(
+                approval_id=approval.approval_id,
+                issuer=self.identities.owner,
+                principal=self.identities.worker,
+                capability=merge_contract.capability,
+                action=merge_contract.action,
+                resource=merge_contract.resource,
+                request_digest=wrong_digest,
+                policy_version="companyos-policy-v1",
+                ttl_seconds=300,
+                max_uses=1,
+                grant_id="grant-wrong-exact-merge",
             )
 
     def test_task_budget_projection_tamper_fails_closed(self) -> None:

@@ -146,6 +146,24 @@ class RepositoryValidationTests(unittest.TestCase):
             ):
                 validate_repository(root)
 
+    def test_authority_schema_compatibility_artifact_drift_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            root = Path(raw_temp)
+            self._copy_validation_surface(root)
+            relative_path = "runtime/contracts/v1/authority-spine.schema.json"
+            source = REPO_ROOT / relative_path
+            target = root / relative_path
+            target.write_text(
+                source.read_text(encoding="utf-8") + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ContractError,
+                "compatibility artifact digest drifted: authority_schema",
+            ):
+                validate_repository(root)
+
     def test_authoring_compatibility_digests_are_eol_portable(self) -> None:
         with tempfile.TemporaryDirectory() as raw_temp:
             root = Path(raw_temp)
