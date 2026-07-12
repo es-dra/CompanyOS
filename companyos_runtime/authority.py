@@ -547,20 +547,22 @@ def _canonical_decision_gate_contracts(
                 f"Task decision gate {gate} requires exactly one exact {scheme} write_scope"
             )
         resource = resources[0]
+        workflow_requests = tuple(
+            step
+            for step in task.workflow_steps
+            if step["action"] == action and step["resource"] == resource
+        )
+        if len(workflow_requests) != 1:
+            raise ContractError(
+                f"Task decision gate {gate} requires exactly one exact workflow request"
+            )
         contracts.append(
             DecisionGateContract(
                 gate_id=gate,
                 capability=capability,
                 action=action,
                 resource=resource,
-                request_digest=content_hash(
-                    {
-                        "gate_id": gate,
-                        "capability": capability.value,
-                        "action": action,
-                        "resource": resource,
-                    }
-                ),
+                request_digest=workflow_requests[0]["request_digest"],
             )
         )
     return tuple(contracts)

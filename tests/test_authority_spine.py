@@ -40,6 +40,7 @@ from companyos_runtime.types import (
     IntegrationState,
     canonical_json,
     content_hash,
+    utc_now,
 )
 from tests.identity_fixtures import IdentityFixture
 
@@ -179,7 +180,35 @@ def task_packet(goal_id: str = "goal-core") -> dict[str, object]:
         "required_runtime_surfaces": [SURFACE],
         "evaluator_required": True,
         "integration_required": True,
-        "workflow_steps": [],
+        "workflow_steps": [
+            {
+                "step_id": "generate-keyframe",
+                "adapter": "image-provider",
+                "action": "generate",
+                "resource": "provider://afs/image/keyframes/model",
+                "request_digest": content_hash(
+                    {"prompt": "bounded keyframe", "seed": 7}
+                ),
+            },
+            {
+                "step_id": "merge-authority",
+                "adapter": "git",
+                "action": "merge",
+                "resource": "repo://afs/worktrees/core/api/path.py",
+                "request_digest": content_hash(
+                    {"head": "commit:authority", "base": "commit:runtime"}
+                ),
+            },
+            {
+                "step_id": "release-authority",
+                "adapter": "release",
+                "action": "release",
+                "resource": "release://afs/core/v1",
+                "request_digest": content_hash(
+                    {"artifact": "authority-spine", "version": "v1"}
+                ),
+            },
+        ],
         "max_attempts": 2,
     }
 
@@ -272,6 +301,59 @@ class AuthoritySpineTests(unittest.TestCase):
                 contract.request_digest,
                 workflow_digests[(contract.action, contract.resource)],
             )
+
+    def test_decision_gate_rejects_missing_duplicate_or_substituted_request(
+        self,
+    ) -> None:
+        missing = task_packet()
+        missing["workflow_steps"] = [
+            step for step in missing["workflow_steps"] if step["action"] != "generate"
+        ]
+        with self.assertRaisesRegex(
+            ContractError, "provider requires exactly one exact workflow request"
+        ):
+            compile_task_authority(
+                missing,
+                project=self.project,
+                program=self.program,
+                goal=self.goal,
+                provider_budget_minor_units=500,
+                provider_call_limit=1,
+            )
+
+        duplicate = task_packet()
+        provider_step = next(
+            step for step in duplicate["workflow_steps"] if step["action"] == "generate"
+        )
+        duplicate["workflow_steps"].append(
+            {**provider_step, "step_id": "generate-keyframe-again"}
+        )
+        with self.assertRaisesRegex(
+            ContractError, "provider requires exactly one exact workflow request"
+        ):
+            compile_task_authority(
+                duplicate,
+                project=self.project,
+                program=self.program,
+                goal=self.goal,
+                provider_budget_minor_units=500,
+                provider_call_limit=1,
+            )
+
+        task, _ = compile_task_authority(
+            task_packet(),
+            project=self.project,
+            program=self.program,
+            goal=self.goal,
+            provider_budget_minor_units=500,
+            provider_call_limit=1,
+        )
+        substituted = task.to_dict()
+        substituted["decision_gate_contracts"][0]["request_digest"] = content_hash(
+            "substituted-request"
+        )
+        with self.assertRaisesRegex(ContractError, "canonical Task gate authority"):
+            CompiledTaskAuthority.from_dict(substituted)
 
     def test_from_dict_rejects_forged_gate_action_with_recomputed_digest(self) -> None:
         task, _ = compile_task_authority(
@@ -1076,6 +1158,13 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
                 )
             )
         provider_digest = provider_contract.request_digest
+        provider_step = next(
+            step
+            for step in self.task.task_spec.workflow_steps
+            if step["action"] == provider_contract.action
+            and step["resource"] == provider_contract.resource
+        )
+        self.assertEqual(provider_digest, provider_step["request_digest"])
         grant_kwargs = dict(
             approval_id=recorded[0].approval_id,
             issuer=self.identities.owner,
@@ -1195,6 +1284,21 @@ class RuntimeAuthoritySpineTests(unittest.TestCase):
             ttl_seconds=120,
             trigger_event_id=integration_event,
         )
+        completed_at = utc_now()
+        with self.store.transaction(immediate=True) as connection:
+            for step in self.task.task_spec.workflow_steps:
+                connection.execute(
+                    "INSERT INTO workflow_steps(task_id, step_id, status, input_digest, "
+                    "result_json, effect_id, started_at, completed_at) "
+                    "VALUES (?, ?, 'succeeded', ?, '{}', NULL, ?, ?)",
+                    (
+                        self.task.task_spec.task_id,
+                        step["step_id"],
+                        step["request_digest"],
+                        completed_at,
+                        completed_at,
+                    ),
+                )
         delivery = self.kernel.confirm_task_delivery(
             task_id=self.task.task_spec.task_id,
             actor=self.identities.release,
