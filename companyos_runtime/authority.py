@@ -1,9 +1,4 @@
-"""Strict Project -> Program -> Goal -> Task authority containment.
-
-The authority spine is a compilation boundary.  It does not schedule work or
-dispatch effects.  Every child carries immutable, versioned parent references
-and may only narrow capabilities, scopes, budgets, runtime surfaces, and gates.
-"""
+"""Strict Project -> Program -> Goal -> Task authority contracts."""
 
 from __future__ import annotations
 
@@ -13,13 +8,7 @@ from typing import Any, Mapping
 
 from .errors import ContractError
 from .scope import normalize_scope, scope_allowed, scopes_overlap
-from .types import (
-    Capability,
-    GoalSpec,
-    RuntimeSurfaceSpec,
-    TaskSpec,
-    content_hash,
-)
+from .types import Capability, GoalSpec, RuntimeSurfaceSpec, TaskSpec, content_hash
 
 
 def _strict_keys(
@@ -191,12 +180,13 @@ class AuthorityBounds:
 
 
 def validate_bounds(bounds: AuthorityBounds, *, label: str) -> None:
-    if (
-        len(bounds.budget_currency) != 3
-        or not bounds.budget_currency.isascii()
-        or not bounds.budget_currency.isalpha()
-        or bounds.budget_currency != bounds.budget_currency.upper()
-    ):
+    currency_valid = (
+        len(bounds.budget_currency) == 3
+        and bounds.budget_currency.isascii()
+        and bounds.budget_currency.isalpha()
+        and bounds.budget_currency == bounds.budget_currency.upper()
+    )
+    if not currency_valid:
         raise ContractError(f"{label} budget currency must be three uppercase ASCII letters")
     _non_negative_int(
         bounds.provider_budget_minor_units, f"{label} provider_budget_minor_units"
@@ -245,6 +235,9 @@ def validate_child_bounds(
     parent_surfaces = {
         item.surface_key: item for item in parent.required_runtime_surfaces
     }
+    child_surfaces = {
+        item.surface_key: item for item in child.required_runtime_surfaces
+    }
     extra_surfaces = [
         item.surface_key
         for item in child.required_runtime_surfaces
@@ -253,6 +246,13 @@ def validate_child_bounds(
     if extra_surfaces:
         raise ContractError(
             f"{label} runtime surfaces exceed parent authority: {sorted(extra_surfaces)}"
+        )
+    missing_surfaces = [
+        key for key, value in parent_surfaces.items() if child_surfaces.get(key) != value
+    ]
+    if missing_surfaces:
+        raise ContractError(
+            f"{label} cannot drop required runtime surfaces: {sorted(missing_surfaces)}"
         )
     if child.budget_currency != parent.budget_currency:
         raise ContractError(f"{label} budget currency differs from parent")
@@ -385,12 +385,16 @@ class CompiledGoalAuthority:
     version: int
     project_ref: AuthorityRef
     program_ref: AuthorityRef
+    required_decision_gates: tuple[str, ...]
     goal_spec: GoalSpec
     schema_version: str = "companyos.compiled-goal-authority.v1"
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CompiledGoalAuthority":
-        fields = {"schema_version", "version", "project_ref", "program_ref", "goal_spec"}
+        fields = {
+            "schema_version", "version", "project_ref", "program_ref",
+            "required_decision_gates", "goal_spec",
+        }
         _strict_keys(data, fields, fields, "compiled_goal_authority")
         if data["schema_version"] != "companyos.compiled-goal-authority.v1":
             raise ContractError("unsupported compiled_goal_authority schema_version")
@@ -404,6 +408,9 @@ class CompiledGoalAuthority:
             version=_positive_int(data["version"], "goal authority version"),
             project_ref=project_ref,
             program_ref=program_ref,
+            required_decision_gates=_strings(
+                data["required_decision_gates"], "required_decision_gates"
+            ),
             goal_spec=GoalSpec.from_dict(data["goal_spec"]),
         )
 
@@ -413,6 +420,7 @@ class CompiledGoalAuthority:
             "version": self.version,
             "project_ref": self.project_ref.to_dict(),
             "program_ref": self.program_ref.to_dict(),
+            "required_decision_gates": list(self.required_decision_gates),
             "goal_spec": self.goal_spec.to_dict(),
         }
 
@@ -426,6 +434,7 @@ class CompiledTaskAuthority:
     project_ref: AuthorityRef
     program_ref: AuthorityRef
     goal_ref: AuthorityRef
+    required_decision_gates: tuple[str, ...]
     provider_budget_minor_units: int
     provider_call_limit: int
     budget_currency: str
@@ -436,7 +445,8 @@ class CompiledTaskAuthority:
     def from_dict(cls, data: Mapping[str, Any]) -> "CompiledTaskAuthority":
         fields = {
             "schema_version", "version", "project_ref", "program_ref", "goal_ref",
-            "provider_budget_minor_units", "provider_call_limit", "budget_currency", "task_spec",
+            "required_decision_gates", "provider_budget_minor_units",
+            "provider_call_limit", "budget_currency", "task_spec",
         }
         _strict_keys(data, fields, fields, "compiled_task_authority")
         if data["schema_version"] != "companyos.compiled-task-authority.v1":
@@ -459,6 +469,9 @@ class CompiledTaskAuthority:
             project_ref=project_ref,
             program_ref=program_ref,
             goal_ref=goal_ref,
+            required_decision_gates=_strings(
+                data["required_decision_gates"], "required_decision_gates"
+            ),
             provider_budget_minor_units=_non_negative_int(
                 data["provider_budget_minor_units"], "task provider budget"
             ),
@@ -479,6 +492,7 @@ class CompiledTaskAuthority:
             "project_ref": self.project_ref.to_dict(),
             "program_ref": self.program_ref.to_dict(),
             "goal_ref": self.goal_ref.to_dict(),
+            "required_decision_gates": list(self.required_decision_gates),
             "provider_budget_minor_units": self.provider_budget_minor_units,
             "provider_call_limit": self.provider_call_limit,
             "budget_currency": self.budget_currency,

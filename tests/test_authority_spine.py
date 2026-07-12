@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator, RefResolver  # type: ignore[import-untyped]
 
-from companyos_runtime.authority import ProgramSpec, ProgramState, ProjectSpec
+from companyos_runtime.authority import (
+    CompiledGoalAuthority,
+    ProgramSpec,
+    ProgramState,
+    ProjectSpec,
+)
 from companyos_runtime.authority_compiler import (
     compile_goal_authority,
     compile_program,
@@ -18,6 +24,9 @@ from companyos_runtime.authority_compiler import (
     validate_program_graph,
 )
 from companyos_runtime.errors import ContractError
+from companyos_runtime.kernel import RuntimeKernel
+from companyos_runtime.store import SQLiteStore
+from tests.identity_fixtures import IdentityFixture
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +81,7 @@ def program_packet(project: ProjectSpec, program_id: str = "afs-core") -> dict[s
         "version": 1,
         "project_ref": project.reference().to_dict(),
         "objective": "close the core production loop",
-        "state": "active",
+        "state": "compiled",
         "dependency_refs": [],
         "wave": 0,
         "authority": authority(
@@ -208,12 +217,35 @@ class AuthoritySpineTests(unittest.TestCase):
                 self.project, [first, ProgramSpec.from_dict(same_wave)]
             )
 
+    def test_dependency_program_requires_graph_proof_in_compile_path(self) -> None:
+        first = compile_program(
+            program_packet(self.project, "first"), project=self.project
+        )
+        second_data = program_packet(self.project, "second")
+        second_data["wave"] = 1
+        second_data["dependency_refs"] = [first.reference().to_dict()]
+        second = ProgramSpec.from_dict(second_data)
+        with self.assertRaisesRegex(ContractError, "complete graph proof"):
+            compile_program(second_data, project=self.project)
+        compiled = compile_program(
+            second_data,
+            project=self.project,
+            program_graph=[first, second],
+        )
+        self.assertEqual(compiled.reference(), second.reference())
+
+    def test_noncompiled_program_requires_current_state_provider(self) -> None:
+        active = program_packet(self.project)
+        active["state"] = "active"
+        with self.assertRaisesRegex(ContractError, "current-state provider"):
+            compile_program(active, project=self.project)
+
     def test_goal_cannot_bypass_program_or_widen_program(self) -> None:
         other_project = compile_project(project_packet("other"))
         other_program = compile_program(
             program_packet(other_project), project=other_project
         )
-        with self.assertRaisesRegex(ContractError, "bypass Program"):
+        with self.assertRaisesRegex(ContractError, "project_ref|bypass Program"):
             compile_goal_authority(
                 goal_packet(), project=self.project, program=other_program
             )
@@ -222,6 +254,22 @@ class AuthoritySpineTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "write_scope"):
             compile_goal_authority(
                 widened, project=self.project, program=self.program
+            )
+
+    def test_forged_program_wrapper_is_revalidated_before_goal_compile(self) -> None:
+        forged_data = self.program.to_dict()
+        forged_authority = dict(forged_data["authority"])
+        forged_authority["capabilities"] = [
+            "read_local", "write_local", "provider_cost", "server_write"
+        ]
+        forged_authority["write_scope"] = ["server://production/runtime/**"]
+        forged_authority["forbidden_scope"] = []
+        forged_data["authority"] = forged_authority
+        forged = ProgramSpec.from_dict(forged_data)
+        self.assertEqual(forged.project_ref, self.project.reference())
+        with self.assertRaisesRegex(ContractError, "exceed|write_scope"):
+            compile_goal_authority(
+                goal_packet(), project=self.project, program=forged
             )
 
     def test_task_cannot_bypass_goal_or_widen_budget(self) -> None:
@@ -242,17 +290,89 @@ class AuthoritySpineTests(unittest.TestCase):
                 provider_call_limit=1,
             )
 
+    def test_forged_goal_wrapper_is_revalidated_before_task_compile(self) -> None:
+        forged_data = self.goal.to_dict()
+        forged_goal = dict(forged_data["goal_spec"])
+        forged_goal["allowed_capabilities"] = [
+            "read_local", "write_local", "provider_cost", "server_write"
+        ]
+        forged_goal["write_scope"] = ["server://production/runtime/**"]
+        forged_goal["forbidden_scope"] = []
+        forged_data["goal_spec"] = forged_goal
+        forged = CompiledGoalAuthority.from_dict(forged_data)
+        self.assertEqual(forged.project_ref, self.project.reference())
+        self.assertEqual(forged.program_ref, self.program.reference())
+        with self.assertRaisesRegex(ContractError, "exceed|write_scope"):
+            compile_task_authority(
+                task_packet(),
+                project=self.project,
+                program=self.program,
+                goal=forged,
+            )
+
     def test_terminal_program_cannot_accept_goal_or_task(self) -> None:
         terminal_data = self.program.to_dict()
         terminal_data["state"] = ProgramState.DELIVERED.value
         terminal = ProgramSpec.from_dict(terminal_data)
-        with self.assertRaisesRegex(ContractError, "terminal Program"):
+        with self.assertRaisesRegex(ContractError, "current-state provider"):
             compile_goal_authority(
                 goal_packet(), project=self.project, program=terminal
             )
-        with self.assertRaisesRegex(ContractError, "terminal Program"):
+        with self.assertRaisesRegex(ContractError, "current-state provider"):
             compile_task_authority(
                 task_packet(), project=self.project, program=terminal, goal=self.goal
+            )
+
+    def test_required_runtime_surfaces_cannot_be_dropped(self) -> None:
+        packet = program_packet(self.project)
+        raw_authority = packet["authority"]
+        assert isinstance(raw_authority, dict)
+        child = dict(raw_authority)
+        child["required_runtime_surfaces"] = []
+        packet["authority"] = child
+        with self.assertRaisesRegex(ContractError, "drop required runtime surfaces"):
+            compile_program(packet, project=self.project)
+
+        goal = goal_packet()
+        goal["required_runtime_surfaces"] = []
+        with self.assertRaisesRegex(ContractError, "drop required runtime surfaces"):
+            compile_goal_authority(goal, project=self.project, program=self.program)
+
+        task = task_packet()
+        task["required_runtime_surfaces"] = []
+        with self.assertRaisesRegex(ContractError, "drop required runtime surfaces"):
+            compile_task_authority(
+                task,
+                project=self.project,
+                program=self.program,
+                goal=self.goal,
+                provider_budget_minor_units=1,
+                provider_call_limit=1,
+            )
+
+    def test_decision_gates_are_bound_into_goal_and_task_authority(self) -> None:
+        task, _ = compile_task_authority(
+            task_packet(),
+            project=self.project,
+            program=self.program,
+            goal=self.goal,
+            provider_budget_minor_units=500,
+            provider_call_limit=1,
+        )
+        self.assertEqual(
+            self.goal.required_decision_gates,
+            self.program.authority.required_decision_gates,
+        )
+        self.assertEqual(task.required_decision_gates, self.goal.required_decision_gates)
+        forged_data = self.goal.to_dict()
+        forged_data["required_decision_gates"] = ["provider"]
+        forged = CompiledGoalAuthority.from_dict(forged_data)
+        with self.assertRaisesRegex(ContractError, "decision gates"):
+            compile_task_authority(
+                task_packet(),
+                project=self.project,
+                program=self.program,
+                goal=forged,
             )
 
 
@@ -314,6 +434,86 @@ class AuthoritySpineSchemaTests(unittest.TestCase):
         invalid = project.to_dict()
         invalid["unknown"] = True
         self.assertTrue(list(self._validator("ProjectSpec").iter_errors(invalid)))
+
+
+class RuntimeAuthoritySpineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = SQLiteStore(Path(self.temp.name) / "runtime.db")
+        self.project = compile_project(project_packet())
+        self.program = compile_program(program_packet(self.project), project=self.project)
+        self.kernel = RuntimeKernel(
+            self.store,
+            authority_spines={"afs": (self.project, self.program)},
+        )
+        self.kernel.initialize()
+        self.identities = IdentityFixture(self.store)
+        self.goal, _ = compile_goal_authority(
+            goal_packet(), project=self.project, program=self.program
+        )
+        self.task, _ = compile_task_authority(
+            task_packet(),
+            project=self.project,
+            program=self.program,
+            goal=self.goal,
+            provider_budget_minor_units=500,
+            provider_call_limit=1,
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_plain_goal_and_task_cannot_bypass_enabled_spine(self) -> None:
+        with self.assertRaisesRegex(ContractError, "CompiledGoalAuthority"):
+            self.kernel.create_goal(
+                project_id="afs",
+                spec=self.goal.goal_spec,
+                actor=self.identities.owner,
+                idempotency_key="plain-goal",
+            )
+        self.kernel.create_goal(
+            project_id="afs",
+            spec=self.goal.goal_spec,
+            compiled_authority=self.goal,
+            actor=self.identities.owner,
+            idempotency_key="compiled-goal",
+        )
+        with self.assertRaisesRegex(ContractError, "CompiledTaskAuthority"):
+            self.kernel.add_task(
+                project_id="afs",
+                spec=self.task.task_spec,
+                actor=self.identities.system,
+                idempotency_key="plain-task",
+            )
+        created = self.kernel.add_task(
+            project_id="afs",
+            spec=self.task.task_spec,
+            compiled_authority=self.task,
+            actor=self.identities.system,
+            idempotency_key="compiled-task",
+        )
+        self.assertEqual(created["task_id"], "task-core")
+
+    def test_restart_without_durable_goal_binding_fails_closed(self) -> None:
+        self.kernel.create_goal(
+            project_id="afs",
+            spec=self.goal.goal_spec,
+            compiled_authority=self.goal,
+            actor=self.identities.owner,
+            idempotency_key="compiled-goal-restart",
+        )
+        restarted = RuntimeKernel(
+            self.store,
+            authority_spines={"afs": (self.project, self.program)},
+        )
+        with self.assertRaisesRegex(ContractError, "binding is unavailable"):
+            restarted.add_task(
+                project_id="afs",
+                spec=self.task.task_spec,
+                compiled_authority=self.task,
+                actor=self.identities.system,
+                idempotency_key="task-after-restart",
+            )
 
 
 if __name__ == "__main__":

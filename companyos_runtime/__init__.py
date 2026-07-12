@@ -21,7 +21,9 @@ from .authority_compiler import (
     compile_program,
     compile_project,
     compile_task_authority,
+    validate_goal_authority,
     validate_program_graph,
+    validate_task_authority,
 )
 from .context import ContextRegistry
 from .compiler import compile_goal, compile_task
@@ -103,7 +105,9 @@ __all__ = [
     "TaskSpec",
     "TaskScheduler",
     "TaskState",
+    "validate_goal_authority",
     "validate_program_graph",
+    "validate_task_authority",
     "VerifiedPrincipal",
     "WorkflowAdapter",
 ]
