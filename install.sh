@@ -75,7 +75,10 @@ for managed_dir in state runs feedback-outbox projects demos; do
   require_descendant "$COMPANY_HOME" "$managed_path"
 done
 
-STAGING="$INSTALL_ROOT.staging-$$"
+STAGING=$(mktemp -d "$INSTALL_ROOT.staging.XXXXXXXX") || {
+  printf '%s\n' "Could not create an exclusive staging directory" >&2
+  exit 2
+}
 CANONICAL_STAGING=$(canonical_path "$STAGING")
 if [ "$CANONICAL_STAGING" != "$STAGING" ]; then
   printf '%s\n' "Staging path changed during canonicalization: $STAGING" >&2
@@ -87,19 +90,27 @@ if [ -L "$STAGING" ]; then
   exit 2
 fi
 
-rm -rf -- "$STAGING"
-mkdir -p "$STAGING"
 if [ "$(canonical_path "$STAGING")" != "$STAGING" ]; then
   printf '%s\n' "Staging final path escaped CompanyOS home: $STAGING" >&2
   exit 2
 fi
-trap 'rm -rf -- "$STAGING"' EXIT HUP INT TERM
+STAGING_OWNER="$STAGING/.companyos-staging-owner"
+STAGING_TOKEN="$STAGING:$$"
+printf '%s\n' "$STAGING_TOKEN" > "$STAGING_OWNER"
+cleanup_staging() {
+  if [ -f "$STAGING_OWNER" ] && [ ! -L "$STAGING" ] && \
+     [ "$(cat "$STAGING_OWNER")" = "$STAGING_TOKEN" ]; then
+    rm -rf -- "$STAGING"
+  fi
+}
+trap cleanup_staging EXIT HUP INT TERM
 
 for item in .gitattributes AGENTS.md LICENSE README.md VERSION pyproject.toml companyos_runtime \
   bin core full-stack gfr runtime templates adapters privacy examples docs; do
   cp -R "$SOURCE_ROOT/$item" "$STAGING/"
 done
 printf '%s\n' "CompanyOS Runtime Kit managed installation" > "$STAGING/$MARKER"
+rm -- "$STAGING_OWNER"
 
 if [ -e "$INSTALL_ROOT" ]; then
   if [ -L "$INSTALL_ROOT" ] || [ "$(canonical_path "$INSTALL_ROOT")" != "$INSTALL_ROOT" ]; then

@@ -374,6 +374,16 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
                 content = (root / installer).read_text(encoding="utf-8")
                 self.assertIn(".gitattributes", content)
 
+    def test_posix_installer_uses_exclusive_owned_staging(self) -> None:
+        content = (Path(__file__).resolve().parents[1] / "install.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('mktemp -d "$INSTALL_ROOT.staging.XXXXXXXX"', content)
+        self.assertIn('STAGING_OWNER="$STAGING/.companyos-staging-owner"', content)
+        self.assertIn("trap cleanup_staging EXIT HUP INT TERM", content)
+        self.assertNotIn('STAGING="$INSTALL_ROOT.staging-$$"', content)
+        self.assertNotIn('rm -rf -- "$STAGING"\nmkdir -p "$STAGING"', content)
+
     def test_ci_covers_both_platforms_and_all_local_gates(self) -> None:
         workflow = (
             Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
