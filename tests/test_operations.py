@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import tempfile
 import unittest
@@ -107,14 +106,16 @@ class RuntimeBackupTests(unittest.TestCase):
 
     def test_exclusive_create_races_never_delete_the_competing_file(self) -> None:
         backup = self.root / "runtime-backup.db"
-        real_open = os.open
+        real_exclusive_create = backup_module._exclusive_create
 
-        def race_backup_create(path, flags, mode=0o777):
-            if Path(path) == backup and flags & os.O_EXCL:
+        def race_backup_create(path: Path):
+            if path == backup:
                 backup.write_bytes(b"competing-backup")
-            return real_open(path, flags, mode)
+            return real_exclusive_create(path)
 
-        with patch.object(backup_module.os, "open", side_effect=race_backup_create):
+        with patch.object(
+            backup_module, "_exclusive_create", side_effect=race_backup_create
+        ):
             with self.assertRaisesRegex(IntegrityError, "appeared concurrently"):
                 create_online_backup(self.source, backup)
         self.assertEqual(backup.read_bytes(), b"competing-backup")
@@ -122,12 +123,16 @@ class RuntimeBackupTests(unittest.TestCase):
         backup.unlink()
         manifest = Path(str(backup) + ".manifest.json")
 
-        def race_manifest_create(path, flags, mode=0o777):
-            if Path(path) == manifest and flags & os.O_EXCL:
-                manifest.write_bytes(b"competing-manifest")
-            return real_open(path, flags, mode)
+        real_write_exclusive = backup_module._write_exclusive
 
-        with patch.object(backup_module.os, "open", side_effect=race_manifest_create):
+        def race_manifest_create(path: Path, content: str):
+            if path == manifest:
+                manifest.write_bytes(b"competing-manifest")
+            return real_write_exclusive(path, content)
+
+        with patch.object(
+            backup_module, "_write_exclusive", side_effect=race_manifest_create
+        ):
             with self.assertRaisesRegex(IntegrityError, "appeared concurrently"):
                 create_online_backup(self.source, backup)
         self.assertEqual(manifest.read_bytes(), b"competing-manifest")
