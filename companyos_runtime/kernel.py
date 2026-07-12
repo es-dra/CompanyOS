@@ -742,7 +742,7 @@ class RuntimeKernel:
                 )
                 connection.execute(
                     "INSERT INTO task_authority_bindings(task_id, project_id, program_id, goal_id, authority_digest, authority_json, provider_budget_minor_units, provider_call_limit, required_decision_gates_json, source_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (spec.task_id, project_id, canonical_task_authority.program_ref.object_id, spec.goal_id, content_hash(canonical_task_authority.to_dict()), canonical_json(canonical_task_authority.to_dict()), canonical_task_authority.provider_budget_minor_units, canonical_task_authority.provider_call_limit, canonical_json(list(canonical_task_authority.required_decision_gates)), binding_event["event_id"]),
+                    (spec.task_id, project_id, canonical_task_authority.program_ref.object_id, spec.goal_id, content_hash(canonical_task_authority.to_dict()), canonical_json(canonical_task_authority.to_dict()), canonical_task_authority.provider_budget_minor_units, canonical_task_authority.provider_call_limit, canonical_json([item.to_dict() for item in canonical_task_authority.decision_gate_contracts]), binding_event["event_id"]),
                 )
             return result
 

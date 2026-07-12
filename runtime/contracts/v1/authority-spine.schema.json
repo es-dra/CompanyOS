@@ -116,7 +116,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "schema_version", "version", "project_ref", "program_ref", "goal_ref", "required_decision_gates",
+        "schema_version", "version", "project_ref", "program_ref", "goal_ref", "required_decision_gates", "decision_gate_contracts",
         "provider_budget_minor_units", "provider_call_limit", "budget_currency", "task_spec"
       ],
       "properties": {
@@ -126,10 +126,26 @@
         "program_ref": { "$ref": "#/$defs/AuthorityRef" },
         "goal_ref": { "$ref": "#/$defs/AuthorityRef" },
         "required_decision_gates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "decision_gate_contracts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DecisionGateContract" }
+        },
         "provider_budget_minor_units": { "type": "integer", "minimum": 0 },
         "provider_call_limit": { "type": "integer", "minimum": 0 },
         "budget_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
         "task_spec": { "$ref": "runtime-contracts.schema.json#/$defs/TaskSpec" }
+      }
+    },
+    "DecisionGateContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "capability", "action", "resource", "request_digest"],
+      "properties": {
+        "gate_id": { "$ref": "#/$defs/NonEmptyString" },
+        "capability": { "enum": ["provider_cost", "repo_remote", "public_release"] },
+        "action": { "$ref": "#/$defs/NonEmptyString" },
+        "resource": { "type": "string", "pattern": "^[a-z][a-z0-9+.-]*://[^*]+$" },
+        "request_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     }
   }

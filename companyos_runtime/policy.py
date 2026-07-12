@@ -63,7 +63,7 @@ def _validated_task_authority_binding(
         != authority.provider_budget_minor_units
         or int(binding["provider_call_limit"]) != authority.provider_call_limit
         or json.loads(binding["required_decision_gates_json"])
-        != list(authority.required_decision_gates)
+        != [item.to_dict() for item in authority.decision_gate_contracts]
     ):
         raise AuthorizationError("persisted Task authority binding mismatch")
     project_row = connection.execute(
@@ -111,34 +111,35 @@ def _required_decision_gates_satisfied(
     if validated is None:
         return True
     authority, binding = validated
-    gates = list(authority.required_decision_gates)
+    contracts = {item.gate_id: item for item in authority.decision_gate_contracts}
+    gates = tuple(contracts)
     binding_version = authority.version
     gates_to_check = tuple(required_gates) if required_gates is not None else tuple(gates)
     if any(gate not in gates for gate in gates_to_check):
         return False
     for gate in gates_to_check:
-        capability = _DECISION_GATE_CAPABILITIES.get(gate)
-        clause = "capability = ?" if capability is not None else "action = ?"
-        value = capability if capability is not None else gate
-        exact_clause = ""
+        contract = contracts[gate]
+        contract_request = (
+            contract.capability.value,
+            contract.action,
+            contract.resource,
+            contract.request_digest,
+        )
+        if exact_request is not None and exact_request != contract_request:
+            return False
         parameters: list[Any] = [
             task_id,
             binding["project_id"],
-            value,
             gate,
             binding["authority_digest"],
             binding_version,
+            *contract_request,
         ]
-        if exact_request is not None:
-            exact_clause = (
-                "AND capability = ? AND action = ? AND resource = ? AND request_digest = ? "
-            )
-            parameters.extend(exact_request)
         approved = connection.execute(
-            f"SELECT 1 FROM approvals WHERE task_id = ? AND project_id = ? AND {clause} "
+            "SELECT 1 FROM approvals WHERE task_id = ? AND project_id = ? "
             "AND decision_gate = ? AND authority_binding_digest = ? "
-            "AND authority_binding_version = ? AND request_digest != '' "
-            f"{exact_clause}"
+            "AND authority_binding_version = ? AND capability = ? AND action = ? "
+            "AND resource = ? AND request_digest = ? "
             "AND decision = 'approved' AND julianday(expires_at) > julianday('now') LIMIT 1",
             tuple(parameters),
         ).fetchone()
@@ -767,10 +768,14 @@ class PolicyEngine:
             decision_gate = None
             if validated_binding is not None:
                 authority, authority_binding = validated_binding
-                required_gates = list(authority.required_decision_gates)
-                for gate, gate_capability in _DECISION_GATE_CAPABILITIES.items():
-                    if gate_capability == capability_value and gate in required_gates:
-                        decision_gate = gate
+                for contract in authority.decision_gate_contracts:
+                    if (
+                        contract.capability.value,
+                        contract.action,
+                        contract.resource,
+                        contract.request_digest,
+                    ) == (capability_value, action, resource, request_digest):
+                        decision_gate = contract.gate_id
                         break
                 binding_digest = authority_binding["authority_digest"]
                 binding_version = authority.version

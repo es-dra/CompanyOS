@@ -334,7 +334,7 @@ class ProjectionReplayer:
             "provider_budget_minor_units": authority.provider_budget_minor_units,
             "provider_call_limit": authority.provider_call_limit,
             "required_decision_gates_json": canonical_json(
-                list(authority.required_decision_gates)
+                [item.to_dict() for item in authority.decision_gate_contracts]
             ),
             "source_event_id": row["event_id"],
         }
