@@ -68,6 +68,18 @@ class DomainPackConformanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "namespaced by pack_id"):
             compile_domain_pack(FixtureDomainPack.from_dict(data))
 
+    def test_core_bundle_wire_rejects_foreign_pack_adapter(self) -> None:
+        wire = compile_domain_pack(load_pack("agentflow-studio.json")).to_wire()
+        wire["task_spec"]["workflow_steps"][0]["adapter"] = "companyos.local-projection"
+        with self.assertRaisesRegex(ContractError, "namespaced by pack_id"):
+            AOSCoreBundle.from_wire(wire)
+
+    def test_core_bundle_wire_rejects_empty_adapter_suffix(self) -> None:
+        wire = compile_domain_pack(load_pack("agentflow-studio.json")).to_wire()
+        wire["task_spec"]["workflow_steps"][0]["adapter"] = "agentflow-studio."
+        with self.assertRaisesRegex(ContractError, "namespaced by pack_id"):
+            AOSCoreBundle.from_wire(wire)
+
     def test_domain_extensions_cannot_expand_compiled_goal(self) -> None:
         data = json.loads((FIXTURES / "companyos.json").read_text(encoding="utf-8"))
         data["goal_authoring"]["goal_contract"]["customer_contract"] = "not-core"
