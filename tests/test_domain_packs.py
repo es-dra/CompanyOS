@@ -59,8 +59,12 @@ class DomainPackConformanceTests(unittest.TestCase):
             AOSCoreBundle.from_wire(wire)
 
     def test_pack_adapter_namespace_is_fail_closed(self) -> None:
-        data = json.loads((FIXTURES / "agentflow-studio.json").read_text(encoding="utf-8"))
-        data["task_authoring"]["task_packet"]["workflow_steps"][0]["adapter"] = "companyos.local"
+        data = json.loads(
+            (FIXTURES / "agentflow-studio.json").read_text(encoding="utf-8")
+        )
+        data["task_authoring"]["task_packet"]["workflow_steps"][0]["adapter"] = (
+            "companyos.local"
+        )
         with self.assertRaisesRegex(ContractError, "namespaced by pack_id"):
             compile_domain_pack(FixtureDomainPack.from_dict(data))
 
