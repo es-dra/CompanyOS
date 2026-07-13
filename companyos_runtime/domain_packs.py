@@ -58,14 +58,18 @@ def _text(value: Any, label: str) -> str:
 
 def _pack_id(value: Any) -> str:
     result = _text(value, "pack_id")
-    if any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in result):
+    if any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in result
+    ):
         raise ContractError("pack_id must use lowercase letters, digits, and hyphens")
     return result
 
 
 def _digest(value: Any, label: str) -> str:
     result = _text(value, label)
-    if len(result) != 64 or any(character not in "0123456789abcdef" for character in result):
+    if len(result) != 64 or any(
+        character not in "0123456789abcdef" for character in result
+    ):
         raise ContractError(f"{label} must be lowercase SHA-256 hex")
     return result
 
@@ -220,7 +224,9 @@ def compile_domain_pack(pack: DomainPack) -> AOSCoreBundle:
     goal, goal_result = compile_goal(pack.goal_authoring())
     task, task_result = compile_task(pack.task_authoring(), goal=goal)
     adapter_prefix = f"{pack_id}."
-    if any(not step["adapter"].startswith(adapter_prefix) for step in task.workflow_steps):
+    if any(
+        not step["adapter"].startswith(adapter_prefix) for step in task.workflow_steps
+    ):
         raise ContractError("workflow adapter ids must be namespaced by pack_id")
     return AOSCoreBundle(
         pack_id=pack_id,
@@ -263,14 +269,21 @@ def run_domain_pack_conformance(pack: DomainPack) -> DomainPackConformanceReport
 
 def run_cross_domain_conformance(packs: list[DomainPack]) -> dict[str, Any]:
     if len(packs) < 2:
-        raise ContractError("cross-domain conformance requires at least two Domain Packs")
+        raise ContractError(
+            "cross-domain conformance requires at least two Domain Packs"
+        )
     reports = [run_domain_pack_conformance(pack) for pack in packs]
     pack_ids = [report.pack_id for report in reports]
     domains = [report.domain for report in reports]
     goal_ids = [report.goal_id for report in reports]
     task_ids = [report.task_id for report in reports]
-    if any(len(values) != len(set(values)) for values in (pack_ids, domains, goal_ids, task_ids)):
-        raise ContractError("cross-domain conformance requires unique packs, domains, and core ids")
+    if any(
+        len(values) != len(set(values))
+        for values in (pack_ids, domains, goal_ids, task_ids)
+    ):
+        raise ContractError(
+            "cross-domain conformance requires unique packs, domains, and core ids"
+        )
     return {
         "contract_version": CORE_CONTRACT_VERSION,
         "status": "passed",
