@@ -75,6 +75,16 @@ def _digest(value: Any, label: str) -> str:
     return result
 
 
+def _validate_adapter_namespace(pack_id: str, task: TaskSpec) -> None:
+    adapter_prefix = f"{pack_id}."
+    if any(
+        not step["adapter"].startswith(adapter_prefix)
+        or step["adapter"] == adapter_prefix
+        for step in task.workflow_steps
+    ):
+        raise ContractError("workflow adapter ids must be namespaced by pack_id")
+
+
 class DomainPack(Protocol):
     """The only API a domain implements to target AOS Core v0.1."""
 
@@ -173,6 +183,7 @@ class AOSCoreBundle:
             raise ContractError("domain_ref must be an opaque URI owned by pack_id")
         goal = GoalSpec.from_dict(_object(data["goal_spec"], "goal_spec"))
         task = TaskSpec.from_dict(_object(data["task_spec"], "task_spec"))
+        _validate_adapter_namespace(pack_id, task)
         validate_task_within_goal(goal, task)
         return cls(
             pack_id=pack_id,
@@ -224,11 +235,7 @@ def compile_domain_pack(pack: DomainPack) -> AOSCoreBundle:
         raise ContractError("domain_ref must be an opaque URI owned by pack_id")
     goal, goal_result = compile_goal(pack.goal_authoring())
     task, task_result = compile_task(pack.task_authoring(), goal=goal)
-    adapter_prefix = f"{pack_id}."
-    if any(
-        not step["adapter"].startswith(adapter_prefix) for step in task.workflow_steps
-    ):
-        raise ContractError("workflow adapter ids must be namespaced by pack_id")
+    _validate_adapter_namespace(pack_id, task)
     return AOSCoreBundle(
         pack_id=pack_id,
         pack_version=_text(pack.pack_version, "pack_version"),
