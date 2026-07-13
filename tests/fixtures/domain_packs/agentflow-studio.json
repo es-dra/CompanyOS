@@ -1,0 +1,52 @@
+{
+  "pack_id": "agentflow-studio",
+  "pack_version": "0.1",
+  "domain": "ai_content_production",
+  "domain_ref": "domain://agentflow-studio/storyboard-candidate/afs-project-001",
+  "goal_authoring": {
+    "goal_contract": {
+      "goal_id": "afs-goal-001",
+      "target_outcome": "Produce one deterministic storyboard candidate with lineage and a human quality gate",
+      "success_evidence_states": ["runtime_verification"],
+      "owner_authority": {
+        "read_scope": ["repo://agentflow-studio", "artifact://afs-project-001/script-001"],
+        "write_scope": ["artifact://afs-project-001/candidates"],
+        "forbidden_scope": ["provider://remote", "server://production"],
+        "allowed_capabilities": ["read_local", "write_local"]
+      },
+      "required_runtime_surfaces": [],
+      "evaluator_required": true,
+      "circuit_breakers": {
+        "max_iterations_without_new_evidence": 2,
+        "provider_budget": {"currency": "USD", "max_minor_units": 0, "max_calls": 0}
+      },
+      "non_goals": ["provider_smoke", "human_acceptance", "business_validation"]
+    }
+  },
+  "task_authoring": {
+    "task_packet": {
+      "task_id": "afs-task-001",
+      "parent_goal_id": "afs-goal-001",
+      "objective": "Compile script-001 into a reviewable storyboard candidate",
+      "expected_delta": "product",
+      "primary_artifact_or_surface": "artifact://afs-project-001/candidates",
+      "read_scope": ["repo://agentflow-studio", "artifact://afs-project-001/script-001"],
+      "write_scope": ["artifact://afs-project-001/candidates"],
+      "forbidden_scope": ["provider://remote", "server://production"],
+      "capabilities": ["read_local", "write_local"],
+      "evaluator_policy": "required_before_claim",
+      "integration_required": true,
+      "required_runtime_surfaces": [],
+      "gates": {"provider": "closed", "server_write": "closed"},
+      "workflow_steps": [{
+        "step_id": "generate-storyboard-candidate",
+        "adapter": "agentflow-studio.runtime-service",
+        "action": "write",
+        "resource": "artifact://afs-project-001/candidates",
+        "request_digest": "d969cb0509616358f1a4acb0e8d288ab4d5e54c662d961862dff4d77b234d943"
+      }],
+      "evidence_target": "runtime_verification",
+      "max_attempts": 2
+    }
+  }
+}

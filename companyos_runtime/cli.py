@@ -12,6 +12,7 @@ from .adapters import run_adapter_conformance
 from .backup import create_online_backup, restore_backup
 from .compiler import compile_goal, compile_task
 from .demo import FAULT_POINTS, run_zero_cost_demo
+from .domain_packs import FixtureDomainPack, run_cross_domain_conformance
 from .errors import RuntimeKernelError
 from .fake_provider import FakeProvider
 from .kernel import RuntimeKernel
@@ -118,6 +119,12 @@ def _parser() -> argparse.ArgumentParser:
     conformance.add_argument("--adapter", choices=["fake"], default="fake")
     conformance.add_argument("--state-dir", required=True)
 
+    domain_conformance = commands.add_parser(
+        "domain-pack-conformance",
+        help="compile two or more deterministic Domain Packs through AOS Core v0.1",
+    )
+    domain_conformance.add_argument("--fixture", action="append", required=True)
+
     return parser
 
 
@@ -151,6 +158,9 @@ def _dispatch(args: argparse.Namespace) -> Any:
         return run_adapter_conformance(
             provider, adapter_name=provider.adapter_id
         ).to_wire()
+    if args.command == "domain-pack-conformance":
+        packs = [FixtureDomainPack.from_dict(_json_file(path)) for path in args.fixture]
+        return run_cross_domain_conformance(packs)
     store = _store(args)
     kernel = RuntimeKernel(store)
     if args.command == "init":

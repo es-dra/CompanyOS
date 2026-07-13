@@ -27,6 +27,16 @@ from .authority_compiler import (
 )
 from .context import ContextRegistry
 from .compiler import compile_goal, compile_task
+from .domain_packs import (
+    AOSCoreBundle,
+    CORE_CONTRACT_VERSION,
+    DomainPack,
+    DomainPackConformanceReport,
+    FixtureDomainPack,
+    compile_domain_pack,
+    run_cross_domain_conformance,
+    run_domain_pack_conformance,
+)
 from .evaluation import (
     ActiveRulePromotionRecord,
     EvaluationRegistry,
@@ -59,14 +69,17 @@ from .workflow import EffectReceipt, OutboxEffect
 
 __all__ = [
     "ActiveRulePromotionRecord",
+    "AOSCoreBundle",
     "AdapterConformanceReport",
     "AdapterReceipt",
     "AuthorityBounds",
     "AuthorityRef",
     "Capability",
+    "CORE_CONTRACT_VERSION",
     "ContextRegistry",
     "create_online_backup",
     "compile_goal",
+    "compile_domain_pack",
     "compile_goal_authority",
     "compile_program",
     "compile_project",
@@ -74,10 +87,13 @@ __all__ = [
     "compile_task_authority",
     "CompiledGoalAuthority",
     "CompiledTaskAuthority",
+    "DomainPack",
+    "DomainPackConformanceReport",
     "EvidenceState",
     "EffectReceipt",
     "EvidenceRegistry",
     "EvaluationRegistry",
+    "FixtureDomainPack",
     "GoalSpec",
     "GoalState",
     "IntegrationState",
@@ -99,6 +115,8 @@ __all__ = [
     "Role",
     "restore_backup",
     "run_adapter_conformance",
+    "run_cross_domain_conformance",
+    "run_domain_pack_conformance",
     "RuntimeSurfaceSpec",
     "SealedCustodyAttestation",
     "SealedCustodyVerifier",
