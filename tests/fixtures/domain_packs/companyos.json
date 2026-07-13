@@ -1,0 +1,52 @@
+{
+  "pack_id": "companyos",
+  "pack_version": "0.1",
+  "domain": "company_governance_runtime",
+  "domain_ref": "domain://companyos/projection-review/companyos-projection-001",
+  "goal_authoring": {
+    "goal_contract": {
+      "goal_id": "companyos-goal-001",
+      "target_outcome": "Review one public-safe projection through a bounded local task",
+      "success_evidence_states": ["structure_verification"],
+      "owner_authority": {
+        "read_scope": ["repo://companyos"],
+        "write_scope": ["repo://companyos/worktree/projection-review"],
+        "forbidden_scope": ["source://private-company-os", "server://production"],
+        "allowed_capabilities": ["read_local", "write_local"]
+      },
+      "required_runtime_surfaces": [],
+      "evaluator_required": false,
+      "circuit_breakers": {
+        "max_iterations_without_new_evidence": 2,
+        "provider_budget": {"currency": "USD", "max_minor_units": 0, "max_calls": 0}
+      },
+      "non_goals": ["active_rule_promotion", "public_release"]
+    }
+  },
+  "task_authoring": {
+    "task_packet": {
+      "task_id": "companyos-task-001",
+      "parent_goal_id": "companyos-goal-001",
+      "objective": "Validate and stage a sanitized projection decision",
+      "expected_delta": "governance",
+      "primary_artifact_or_surface": "repo://companyos/worktree/projection-review",
+      "read_scope": ["repo://companyos"],
+      "write_scope": ["repo://companyos/worktree/projection-review"],
+      "forbidden_scope": ["source://private-company-os", "server://production"],
+      "capabilities": ["read_local", "write_local"],
+      "evaluator_policy": "not_required",
+      "integration_required": true,
+      "required_runtime_surfaces": [],
+      "gates": {},
+      "workflow_steps": [{
+        "step_id": "review-projection",
+        "adapter": "companyos.local-projection",
+        "action": "write",
+        "resource": "repo://companyos/worktree/projection-review",
+        "request_digest": "9f6515465d86f2a3c17a85db53562ab3aa51b991508e9360cc45aed1008c65cd"
+      }],
+      "evidence_target": "structure_verification",
+      "max_attempts": 2
+    }
+  }
+}

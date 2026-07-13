@@ -202,6 +202,18 @@ python -m companyos_runtime adapter-conformance `
 Project adapters can implement the public `WorkflowAdapter` protocol and use
 the reusable harness described in `docs/adapter-conformance.md`.
 
+Run the AOS Core v0.1 cross-domain handoff harness with the bundled CompanyOS
+and AgentFlow Studio deterministic fixtures:
+
+```powershell
+python -m companyos_runtime domain-pack-conformance `
+  --fixture tests/fixtures/domain_packs/companyos.json `
+  --fixture tests/fixtures/domain_packs/agentflow-studio.json
+```
+
+The Core object and Domain Pack boundary are defined in
+`docs/aos-core-v0.1.md`.
+
 Mutating runtime commands, outbox recovery, and projection repair are not
 exposed as unauthenticated CLI surfaces in v0.2. An embedding application must
 authenticate an opaque session and invoke the relevant Python service inside

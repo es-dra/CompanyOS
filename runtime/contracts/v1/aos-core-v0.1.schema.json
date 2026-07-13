@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://companyos.dev/contracts/v1/aos-core-v0.1.schema.json",
+  "title": "AOS Core v0.1 Domain Pack Handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "domain_pack", "domain_ref", "goal_spec", "task_spec", "source_digests"],
+  "properties": {
+    "contract_version": {"const": "aos.core.v0.1"},
+    "domain_pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pack_id", "pack_version"],
+      "properties": {
+        "pack_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "pack_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "domain_ref": {"type": "string", "pattern": "^domain://[a-z0-9-]+/.+$"},
+    "goal_spec": {"$ref": "runtime-contracts.schema.json#/$defs/GoalSpec"},
+    "task_spec": {"$ref": "runtime-contracts.schema.json#/$defs/TaskSpec"},
+    "source_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal_authoring", "task_authoring"],
+      "properties": {
+        "goal_authoring": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "task_authoring": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
