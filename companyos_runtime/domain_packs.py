@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
@@ -267,7 +268,7 @@ def run_domain_pack_conformance(pack: DomainPack) -> DomainPackConformanceReport
     )
 
 
-def run_cross_domain_conformance(packs: list[DomainPack]) -> dict[str, Any]:
+def run_cross_domain_conformance(packs: Sequence[DomainPack]) -> dict[str, Any]:
     if len(packs) < 2:
         raise ContractError(
             "cross-domain conformance requires at least two Domain Packs"
